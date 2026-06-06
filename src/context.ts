@@ -34,8 +34,9 @@ export function formatContext(profile: any, memories: any[]): string {
       "\nProject Knowledge:",
       ...memories.map((m: any) => {
         const time = m.updatedAt ? `[${formatRelativeTime(m.updatedAt)}] ` : "";
-        const content = m.memory ?? m.content ?? "";
-        return `- ${time}${content}`;
+        const body = m.memory ?? m.content ?? m.summary ?? "";
+        const label = m.title ? `${m.title}: ` : "";
+        return `- ${time}${label}${body}`;
       }),
     );
   }

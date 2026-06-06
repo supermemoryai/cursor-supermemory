@@ -31,13 +31,16 @@ async function main() {
   const userTag = getUserTag(config);
   const projectTag = getProjectTag(input.workspace_roots[0] || process.cwd(), config);
 
+  // Use documents.list (recency-ordered) rather than search.memories: the v4
+  // search endpoint rejects the empty query we'd need to "list everything".
   const [profileResult, memoriesResult] = await Promise.allSettled([
     createClient(apiKey, userTag).profile({ containerTag: userTag }),
-    createClient(apiKey, projectTag).search.memories({ q: "", containerTag: projectTag, limit: 10 }),
+    createClient(apiKey, projectTag).documents.list({ containerTags: [projectTag], limit: 10 }),
   ]);
 
   const profile = profileResult.status === "fulfilled" ? profileResult.value.profile : null;
-  const memories = memoriesResult.status === "fulfilled" ? memoriesResult.value.results : [];
+  const memories =
+    memoriesResult.status === "fulfilled" ? (memoriesResult.value.memories ?? []) : [];
 
   const context = formatContext(profile, memories);
   if (!context) return ok();
