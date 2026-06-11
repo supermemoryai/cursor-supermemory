@@ -1,11 +1,11 @@
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { randomBytes } from "node:crypto";
 
 const CREDENTIALS_DIR = path.join(os.homedir(), ".supermemory-cursor");
 const CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "credentials.json");
-const AUTH_PORT = 19878;
-const AUTH_URL = "https://console.supermemory.ai/auth/connect";
+const AUTH_URL = process.env.SUPERMEMORY_AUTH_URL || "https://app.supermemory.ai/auth/connect";
 
 const SUCCESS_HTML = `<!DOCTYPE html>
 <html><head><style>
@@ -47,14 +47,19 @@ export async function startAuthFlow(
 ): Promise<{ success: boolean; apiKey?: string; error?: string }> {
   return new Promise((resolve) => {
     let settled = false;
+    const stateToken = randomBytes(16).toString("hex");
 
     const server = Bun.serve({
-      port: AUTH_PORT,
+      port: 0,
       hostname: "127.0.0.1",
       fetch(req) {
         const url = new URL(req.url);
         if (url.pathname !== "/callback") {
           return new Response("Not found", { status: 404 });
+        }
+
+        if (url.searchParams.get("state") !== stateToken) {
+          return new Response("Invalid state", { status: 403 });
         }
 
         const apiKey = url.searchParams.get("apikey") || url.searchParams.get("api_key");
@@ -74,12 +79,13 @@ export async function startAuthFlow(
       },
     });
 
-    const callbackUrl = `http://localhost:${AUTH_PORT}/callback`;
+    const callbackUrl = `http://127.0.0.1:${server.port}/callback?state=${stateToken}`;
     const authUrl = `${AUTH_URL}?callback=${encodeURIComponent(callbackUrl)}&client=cursor`;
 
     process.stderr.write(`\nOpen this URL to connect Supermemory to Cursor:\n\n  ${authUrl}\n\nWaiting...\n`);
-    const opener = process.platform === "win32" ? "start" : process.platform === "darwin" ? "open" : "xdg-open";
-    Bun.$`${opener} ${authUrl}`.quiet().nothrow();
+    openUrl(authUrl).catch((error) => {
+      process.stderr.write(`Failed to open browser automatically: ${error.message}\n`);
+    });
 
     const timer = setTimeout(() => {
       if (!settled) {
@@ -88,4 +94,16 @@ export async function startAuthFlow(
       }
     }, timeoutMs);
   });
+}
+
+async function openUrl(url: string): Promise<void> {
+  if (process.platform === "win32") {
+    const result = await Bun.spawn(["cmd.exe", "/c", "start", "", url]).exited;
+    if (result !== 0) throw new Error(`browser opener exited with code ${result}`);
+    return;
+  }
+
+  const opener = process.platform === "darwin" ? "open" : "xdg-open";
+  const result = await Bun.spawn([opener, url]).exited;
+  if (result !== 0) throw new Error(`browser opener exited with code ${result}`);
 }
