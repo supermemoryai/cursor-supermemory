@@ -19,7 +19,7 @@
     "@types/bun": "latest",
     "typescript": "^5"
   },
-  "files": ["dist", "rules", "skills", "commands", "hooks", ".cursor-plugin", ".mcp.json"],
+  "files": ["dist", "rules", "skills", "commands", "hooks", ".cursor-plugin", ".mcp.json", "assets"],
   "keywords": ["cursor", "supermemory", "mcp", "memory", "ai", "plugin"],
   "license": "MIT",
   "repository": {
