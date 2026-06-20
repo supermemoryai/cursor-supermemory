@@ -3,6 +3,9 @@ import {
   loadCredentials,
   startAuthFlow,
   clearCredentials,
+  clearAuthAttempted,
+  clearLoggedOutMarker,
+  markLoggedOut,
 } from "./auth.ts";
 
 const command = process.argv[2];
@@ -19,6 +22,8 @@ switch (command) {
       process.exit(0);
     }
     console.log("Opening browser to authenticate...");
+    clearAuthAttempted();
+    clearLoggedOutMarker();
     const result = await startAuthFlow();
     if (result.success) {
       console.log("Authenticated successfully.");
@@ -31,6 +36,7 @@ switch (command) {
 
   case "logout": {
     const removed = clearCredentials();
+    markLoggedOut();
     console.log(removed ? "Logged out." : "No credentials found.");
     break;
   }
