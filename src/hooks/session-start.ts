@@ -1,4 +1,10 @@
-import { loadCredentials } from "../auth.ts";
+import {
+  clearAuthAttempted,
+  hasAuthAttempted,
+  isLoggedOut,
+  markAuthAttempted,
+  startAuthFlow,
+} from "../auth.ts";
 import { loadConfig, getApiKey } from "../config.ts";
 import { getUserTag, getProjectTag } from "../tags.ts";
 import { createClient } from "../client.ts";
@@ -16,11 +22,19 @@ async function main() {
   const raw = await Bun.stdin.text();
   const input: SessionStartInput = JSON.parse(raw);
 
-  const creds = loadCredentials();
-  if (!creds) return ok();
-
   const config = loadConfig(input.workspace_roots[0]);
-  const apiKey = getApiKey(config);
+  let apiKey = getApiKey(config);
+  if (!apiKey && !isLoggedOut() && !hasAuthAttempted()) {
+    try {
+      markAuthAttempted();
+      const authResult = await startAuthFlow();
+      if (authResult.success) {
+        clearAuthAttempted();
+        apiKey = getApiKey(config);
+      }
+    } catch {}
+  }
+
   if (!apiKey) return ok();
 
   // Inject user email from input for tag resolution

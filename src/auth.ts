@@ -5,6 +5,8 @@ import { randomBytes } from "node:crypto";
 
 const CREDENTIALS_DIR = path.join(os.homedir(), ".supermemory-cursor");
 const CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "credentials.json");
+const AUTH_ATTEMPTED_FILE = path.join(CREDENTIALS_DIR, ".auth-attempted");
+const LOGGED_OUT_FILE = path.join(CREDENTIALS_DIR, ".logged-out");
 const AUTH_URL = process.env.SUPERMEMORY_AUTH_URL || "https://app.supermemory.ai/auth/connect";
 const CURSOR_LOGO_FILE = path.join(import.meta.dir, "..", "assets", "cursor.png");
 
@@ -148,6 +150,8 @@ export function saveCredentials(apiKey: string): void {
   fs.mkdirSync(CREDENTIALS_DIR, { recursive: true, mode: 0o700 });
   const data = { apiKey, createdAt: new Date().toISOString() };
   fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
+  clearAuthAttempted();
+  clearLoggedOutMarker();
 }
 
 export function clearCredentials(): boolean {
@@ -160,6 +164,37 @@ export function clearCredentials(): boolean {
   } catch {
     return false;
   }
+}
+
+export function hasAuthAttempted(): boolean {
+  return fs.existsSync(AUTH_ATTEMPTED_FILE);
+}
+
+export function markAuthAttempted(): void {
+  fs.mkdirSync(CREDENTIALS_DIR, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(AUTH_ATTEMPTED_FILE, new Date().toISOString());
+}
+
+export function clearAuthAttempted(): void {
+  try {
+    if (fs.existsSync(AUTH_ATTEMPTED_FILE)) fs.unlinkSync(AUTH_ATTEMPTED_FILE);
+  } catch {}
+}
+
+export function isLoggedOut(): boolean {
+  return fs.existsSync(LOGGED_OUT_FILE);
+}
+
+export function markLoggedOut(): void {
+  fs.mkdirSync(CREDENTIALS_DIR, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(LOGGED_OUT_FILE, new Date().toISOString());
+  clearAuthAttempted();
+}
+
+export function clearLoggedOutMarker(): void {
+  try {
+    if (fs.existsSync(LOGGED_OUT_FILE)) fs.unlinkSync(LOGGED_OUT_FILE);
+  } catch {}
 }
 
 export async function startAuthFlow(
