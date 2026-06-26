@@ -4,7 +4,15 @@ Persistent AI memory for Cursor — powered by [Supermemory](https://supermemory
 
 ## Install
 
-Install from the [Cursor Marketplace](https://cursor.com/marketplace), then authenticate:
+Install the Cursor integration package:
+
+```bash
+npm install cursor-supermemory@latest
+```
+
+After it finishes, restart Cursor or run **Developer: Reload Window**.
+
+If you only need to authenticate an existing install, run:
 
 ```bash
 bunx cursor-supermemory@latest login
@@ -103,7 +111,7 @@ bun install
 bun run build   # compiles all dist/ files
 ```
 
-### Testing locally (without the marketplace)
+### Testing from this repo
 
 1. **Open this repo in Cursor** — rules, commands, skills, and hooks are picked up from `.cursor-plugin`.
 2. **Build:** `bun run build`
