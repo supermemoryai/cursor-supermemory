@@ -4,13 +4,13 @@ Persistent AI memory for Cursor — powered by [Supermemory](https://supermemory
 
 ## Install
 
-Install the Cursor integration with the Supermemory CLI:
+Install the Cursor integration package:
 
 ```bash
-npx supermemory plugin --only cursor
+npm install cursor-supermemory@latest
 ```
 
-This installs the local Cursor plugin bundle and starts Supermemory auth. After it finishes, restart Cursor or run **Developer: Reload Window**.
+After it finishes, restart Cursor or run **Developer: Reload Window**.
 
 If you only need to authenticate an existing install, run:
 
