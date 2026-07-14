@@ -2,7 +2,10 @@
   "mcpServers": {
     "supermemory": {
       "command": "bunx",
-      "args": ["--bun", "cursor-supermemory@latest", "mcp"]
+      "args": ["--bun", "cursor-supermemory@latest", "mcp"],
+      "env": {
+        "SUPERMEMORY_WORKSPACE_ROOT": "${workspaceFolder}"
+      }
     }
   }
 }
