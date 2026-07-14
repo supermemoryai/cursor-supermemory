@@ -5,14 +5,23 @@ import { loadConfig, getApiKey, writeConfig, getProjectConfigPath, GLOBAL_CONFIG
 import { getUserTag, getProjectTag } from "./tags.ts";
 import { createClient } from "./client.ts";
 
+function getWorkspaceRoot() {
+  const workspaceRoot = process.env.SUPERMEMORY_WORKSPACE_ROOT?.trim();
+  if (workspaceRoot && !workspaceRoot.includes("${")) return workspaceRoot;
+  return process.cwd();
+}
+
 function getAuth() {
-  const config = loadConfig();
+  const workspaceRoot = getWorkspaceRoot();
+  const config = loadConfig(workspaceRoot);
   const apiKey = getApiKey(config);
   if (!apiKey) throw new Error("Not authenticated. Run `cursor-supermemory login` to connect.");
   return {
     apiKey,
     userTag: getUserTag(config),
-    projectTag: getProjectTag(process.cwd(), config),
+    projectTag: getProjectTag(workspaceRoot, config),
+    workspaceRoot,
+    config,
   };
 }
 
@@ -39,9 +48,8 @@ export async function startMcpServer() {
       inputSchema: {},
     },
     async () => {
-      const cwd = process.cwd();
-      const config = loadConfig(cwd);
       const auth = getAuth();
+      const { config, workspaceRoot } = auth;
       return {
         content: [
           {
@@ -61,7 +69,7 @@ export async function startMcpServer() {
                   project: auth.projectTag,
                 },
                 configFiles: {
-                  project: getProjectConfigPath(cwd),
+                  project: getProjectConfigPath(workspaceRoot),
                   global: GLOBAL_CONFIG_PATH,
                 },
               },
@@ -92,9 +100,9 @@ export async function startMcpServer() {
     async ({ scope, ...updates }) => {
       const filtered = Object.fromEntries(Object.entries(updates).filter(([, v]) => v !== undefined));
       if (Object.keys(filtered).length === 0) throw new Error("No config values provided.");
-      writeConfig(filtered as any, scope);
-      const cwd = process.cwd();
-      const filePath = scope === "project" ? getProjectConfigPath(cwd) : GLOBAL_CONFIG_PATH;
+      const workspaceRoot = getWorkspaceRoot();
+      writeConfig(filtered as any, scope, workspaceRoot);
+      const filePath = scope === "project" ? getProjectConfigPath(workspaceRoot) : GLOBAL_CONFIG_PATH;
       return {
         content: [{ type: "text", text: `Config updated (${scope}): ${filePath}\n${JSON.stringify(filtered, null, 2)}` }],
       };
