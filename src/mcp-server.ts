@@ -1,5 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { realpathSync, statSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { z } from "zod";
 import {
   GLOBAL_CONFIG_PATH,
@@ -30,6 +32,26 @@ function getAuth(cwd = process.cwd()) {
     tags,
     client: new CursorMemoryClient(apiKey, config.baseUrl),
   };
+}
+
+export function resolveWorkspaceRoot(workspaceRoot: string): string {
+  const candidate = workspaceRoot.trim();
+  if (!isAbsolute(candidate)) {
+    throw new Error("workspaceRoot must be an absolute path.");
+  }
+
+  try {
+    const resolved = realpathSync(candidate);
+    if (!statSync(resolved).isDirectory()) {
+      throw new Error("workspaceRoot must point to a directory.");
+    }
+    return resolved;
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("workspaceRoot")) {
+      throw error;
+    }
+    throw new Error(`workspaceRoot is not an accessible directory: ${candidate}`);
+  }
 }
 
 interface ResolvedContainer {
@@ -77,19 +99,32 @@ const containerSchema = z
     'Container to use: "user" (default), "project", "both", or any custom tag string',
   );
 
-export async function startMcpServer() {
-  const server = new McpServer({ name: "supermemory", version: "1.0.2" });
+const workspaceRootSchema = z
+  .string()
+  .min(1)
+  .describe(
+    "Absolute path of the active Cursor workspace. Always pass the workspace root shown in the current agent context.",
+  );
+
+export function createMcpServer() {
+  const server = new McpServer(
+    { name: "supermemory", version: "1.0.2" },
+    {
+      instructions:
+        "Every tool call requires workspaceRoot. Pass the absolute path of the active Cursor workspace from the current agent context.",
+    },
+  );
 
   server.registerTool(
     "supermemory_get_config",
     {
       description:
         "Show the current supermemory configuration — effective settings, resolved container tags, and config file paths.",
-      inputSchema: {},
+      inputSchema: { workspaceRoot: workspaceRootSchema },
     },
-    async () => {
-      const cwd = process.cwd();
-      const auth = getAuth();
+    async ({ workspaceRoot }) => {
+      const cwd = resolveWorkspaceRoot(workspaceRoot);
+      const auth = getAuth(cwd);
       return {
         content: [
           {
@@ -150,6 +185,7 @@ export async function startMcpServer() {
       description:
         "Update supermemory configuration. Use scope='project' to set per-workspace overrides (saved to .cursor/.supermemory/config.json), or scope='global' for user-wide defaults.",
       inputSchema: {
+        workspaceRoot: workspaceRootSchema,
         scope: z.enum(["project", "global"]).default("project"),
         repoContainerTag: z
           .string()
@@ -170,15 +206,15 @@ export async function startMcpServer() {
         injectProfile: z.boolean().optional(),
       },
     },
-    async ({ scope, ...updates }) => {
+    async ({ workspaceRoot, scope, ...updates }) => {
       const filtered = Object.fromEntries(
         Object.entries(updates).filter(([, value]) => value !== undefined),
       );
       if (Object.keys(filtered).length === 0) {
         throw new Error("No config values provided.");
       }
-      writeConfig(filtered as any, scope);
-      const cwd = process.cwd();
+      const cwd = resolveWorkspaceRoot(workspaceRoot);
+      writeConfig(filtered as any, scope, cwd);
       const filePath =
         scope === "project" ? getProjectConfigPath(cwd) : GLOBAL_CONFIG_PATH;
       return {
@@ -198,10 +234,10 @@ export async function startMcpServer() {
       description:
         "Show the shared repository container and all compatibility read tags. " +
         '"user" and "project" write to the same container with different sm_scope metadata.',
-      inputSchema: {},
+      inputSchema: { workspaceRoot: workspaceRootSchema },
     },
-    async () => {
-      const auth = getAuth();
+    async ({ workspaceRoot }) => {
+      const auth = getAuth(resolveWorkspaceRoot(workspaceRoot));
       return {
         content: [
           {
@@ -245,10 +281,15 @@ export async function startMcpServer() {
     {
       description:
         'Search memories. Use container="user" for personal, "project" for workspace, or pass a custom tag.',
-      inputSchema: { query: z.string(), container: containerSchema, limit: z.number().default(10) },
+      inputSchema: {
+        workspaceRoot: workspaceRootSchema,
+        query: z.string(),
+        container: containerSchema,
+        limit: z.number().default(10),
+      },
     },
-    async ({ query, container, limit }) => {
-      const auth = getAuth();
+    async ({ workspaceRoot, query, container, limit }) => {
+      const auth = getAuth(resolveWorkspaceRoot(workspaceRoot));
       const resolved = resolveContainer(auth.tags, container);
       const result = resolved.scope
         ? await auth.client.searchScoped(
@@ -275,15 +316,19 @@ export async function startMcpServer() {
     {
       description:
         'Save information to memory. Use container="user" for personal, "project" for workspace, or a custom tag.',
-      inputSchema: { content: z.string(), container: containerSchema },
+      inputSchema: {
+        workspaceRoot: workspaceRootSchema,
+        content: z.string(),
+        container: containerSchema,
+      },
     },
-    async ({ content, container }) => {
+    async ({ workspaceRoot, content, container }) => {
       if (container === "both") {
         throw new Error(
           'The "both" alias is read-only. Choose "user" or "project" when saving.',
         );
       }
-      const auth = getAuth();
+      const auth = getAuth(resolveWorkspaceRoot(workspaceRoot));
       const resolved = resolveContainer(auth.tags, container);
       const result = await auth.client.addMemory(
         content,
@@ -306,10 +351,13 @@ export async function startMcpServer() {
     "supermemory_profile",
     {
       description: "Get the user's profile summary based on their personal memories.",
-      inputSchema: { query: z.string().optional() },
+      inputSchema: {
+        workspaceRoot: workspaceRootSchema,
+        query: z.string().optional(),
+      },
     },
-    async ({ query }) => {
-      const auth = getAuth();
+    async ({ workspaceRoot, query }) => {
+      const auth = getAuth(resolveWorkspaceRoot(workspaceRoot));
       const result = await auth.client.profileScoped(
         auth.tags.canonical,
         auth.tags.personalReads,
@@ -325,10 +373,15 @@ export async function startMcpServer() {
     "supermemory_list",
     {
       description: "List stored memories, optionally filtered by container.",
-      inputSchema: { limit: z.number().default(20), page: z.number().default(1), container: containerSchema },
+      inputSchema: {
+        workspaceRoot: workspaceRootSchema,
+        limit: z.number().default(20),
+        page: z.number().default(1),
+        container: containerSchema,
+      },
     },
-    async ({ limit, page, container }) => {
-      const auth = getAuth();
+    async ({ workspaceRoot, limit, page, container }) => {
+      const auth = getAuth(resolveWorkspaceRoot(workspaceRoot));
       const resolved = resolveContainer(auth.tags, container);
       const result = resolved.scope
         ? await auth.client.listScoped(
@@ -348,14 +401,15 @@ export async function startMcpServer() {
     {
       description: "Forget a specific memory by id or content.",
       inputSchema: {
+        workspaceRoot: workspaceRootSchema,
         id: z.string().optional(),
         content: z.string().optional(),
         container: containerSchema,
       },
     },
-    async ({ id, content, container }) => {
+    async ({ workspaceRoot, id, content, container }) => {
       if (!id && !content) throw new Error("Provide either id or content.");
-      const auth = getAuth();
+      const auth = getAuth(resolveWorkspaceRoot(workspaceRoot));
       const resolved = resolveContainer(auth.tags, container);
       const result = await auth.client.forgetMany(resolved.reads, {
         id,
@@ -365,5 +419,10 @@ export async function startMcpServer() {
     },
   );
 
+  return server;
+}
+
+export async function startMcpServer() {
+  const server = createMcpServer();
   await server.connect(new StdioServerTransport());
 }
