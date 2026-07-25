@@ -13,8 +13,15 @@ function formatRelativeTime(dateStr: string): string {
   return `${Math.floor(weeks)}w ago`;
 }
 
-export function formatContext(profile: any, memories: any[]): string {
-  const profileItems: string[] = profile?.static ?? profile?.dynamic ?? [];
+export function formatContext(
+  profile: any,
+  memories: any[],
+  maxLength = MAX_LENGTH,
+): string {
+  const profileItems: string[] = [
+    ...(Array.isArray(profile?.static) ? profile.static : []),
+    ...(Array.isArray(profile?.dynamic) ? profile.dynamic : []),
+  ];
   const hasProfile = profileItems.length > 0;
   const hasMemories = memories?.length > 0;
 
@@ -44,8 +51,8 @@ export function formatContext(profile: any, memories: any[]): string {
   sections.push("\nUse these memories when relevant. Don't force them into every response.");
 
   let result = sections.join("\n");
-  if (result.length > MAX_LENGTH) {
-    result = result.slice(0, MAX_LENGTH - 3) + "...";
+  if (result.length > maxLength) {
+    result = result.slice(0, maxLength - 3) + "...";
   }
   return result;
 }

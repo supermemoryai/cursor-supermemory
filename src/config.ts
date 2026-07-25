@@ -18,19 +18,23 @@ export function writeConfig(updates: Partial<Omit<Config, "apiKey">>, scope: "pr
 
 export interface Config {
   apiKey: string | null;
+  baseUrl: string | null;
   similarityThreshold: number;
   maxMemories: number;
   maxProjectMemories: number;
   injectProfile: boolean;
+  repoContainerTag: string | null;
   userContainerTag: string | null;
   projectContainerTag: string | null;
 }
 
 const DEFAULTS: Omit<Config, "apiKey"> = {
+  baseUrl: null,
   similarityThreshold: 0.3,
   maxMemories: 10,
   maxProjectMemories: 5,
   injectProfile: true,
+  repoContainerTag: null,
   userContainerTag: null,
   projectContainerTag: null,
 };
@@ -66,10 +70,16 @@ export function loadConfig(cwd?: string): Config {
 
   return {
     apiKey: process.env.SUPERMEMORY_API_KEY ?? merged.apiKey ?? null,
+    baseUrl:
+      process.env.SUPERMEMORY_API_URL ??
+      process.env.SUPERMEMORY_BASE_URL ??
+      merged.baseUrl ??
+      null,
     similarityThreshold: merged.similarityThreshold,
     maxMemories: merged.maxMemories,
     maxProjectMemories: merged.maxProjectMemories,
     injectProfile: merged.injectProfile,
+    repoContainerTag: merged.repoContainerTag,
     userContainerTag: merged.userContainerTag,
     projectContainerTag: merged.projectContainerTag,
   };
