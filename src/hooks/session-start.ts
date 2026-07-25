@@ -1,7 +1,6 @@
-import { loadCredentials } from "../auth.ts";
 import { loadConfig, getApiKey } from "../config.ts";
-import { getUserTag, getProjectTag } from "../tags.ts";
-import { createClient } from "../client.ts";
+import { getResolvedTags } from "../tags.ts";
+import { CursorMemoryClient } from "../client.ts";
 import { formatContext } from "../context.ts";
 
 interface SessionStartInput {
@@ -16,10 +15,8 @@ async function main() {
   const raw = await Bun.stdin.text();
   const input: SessionStartInput = JSON.parse(raw);
 
-  const creds = loadCredentials();
-  if (!creds) return ok();
-
-  const config = loadConfig(input.workspace_roots[0]);
+  const workspaceRoot = input.workspace_roots?.[0] || process.cwd();
+  const config = loadConfig(workspaceRoot);
   const apiKey = getApiKey(config);
   if (!apiKey) return ok();
 
@@ -28,17 +25,31 @@ async function main() {
     process.env.CURSOR_USER_EMAIL = input.user_email;
   }
 
-  const userTag = getUserTag(config);
-  const projectTag = getProjectTag(input.workspace_roots[0] || process.cwd(), config);
+  const tags = getResolvedTags(workspaceRoot, config);
+  const client = new CursorMemoryClient(apiKey, config.baseUrl);
 
-  // Use documents.list (recency-ordered) rather than search.memories: the v4
-  // search endpoint rejects the empty query we'd need to "list everything".
   const [profileResult, memoriesResult] = await Promise.allSettled([
-    createClient(apiKey, userTag).profile({ containerTag: userTag }),
-    createClient(apiKey, projectTag).documents.list({ containerTags: [projectTag], limit: 10 }),
+    config.injectProfile
+      ? client.profileScoped(
+          tags.canonical,
+          tags.personalReads,
+          "personal",
+          undefined,
+          config.maxMemories,
+        )
+      : Promise.resolve(null),
+    client.listScoped(
+      tags.canonical,
+      tags.projectReads,
+      "project",
+      config.maxProjectMemories,
+    ),
   ]);
 
-  const profile = profileResult.status === "fulfilled" ? profileResult.value.profile : null;
+  const profile =
+    profileResult.status === "fulfilled" && profileResult.value
+      ? profileResult.value.profile
+      : null;
   const memories =
     memoriesResult.status === "fulfilled" ? (memoriesResult.value.memories ?? []) : [];
 

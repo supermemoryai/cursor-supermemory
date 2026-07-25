@@ -38,9 +38,14 @@ bunx cursor-supermemory@latest login
 | `supermemory_profile` | Get your user profile summary |
 
 All tools that accept a `container` argument support:
-- `"user"` (default) — personal memory, shared across all projects
-- `"project"` — scoped to the current workspace
+- `"user"` (default) — personal memories for the current repository
+- `"project"` — project knowledge for the current repository
+- `"both"` — both scopes plus compatible legacy memories
 - any custom string — used as a raw container tag
+
+`user` and `project` now write to the same repository container. The
+`sm_scope` metadata field keeps personal/session memories separate from
+explicit project knowledge when an agent requests one scope.
 
 ## Configuration
 
@@ -49,9 +54,11 @@ All tools that accept a `container` argument support:
 | Variable | Description |
 |---|---|
 | `SUPERMEMORY_API_KEY` | API key (overrides all other sources) |
-| `SUPERMEMORY_USER_TAG` | Override the personal container tag |
-| `SUPERMEMORY_PROJECT_TAG` | Override the project container tag |
-| `CURSOR_USER_EMAIL` | Used to derive the user container tag |
+| `SUPERMEMORY_API_URL` | Override the Supermemory API base URL |
+| `SUPERMEMORY_REPO_TAG` | Override the unified repository container tag |
+| `SUPERMEMORY_USER_TAG` | Legacy Cursor personal container to continue reading |
+| `SUPERMEMORY_PROJECT_TAG` | Legacy Cursor project container to continue reading |
+| `CURSOR_USER_EMAIL` | Used only to find legacy Cursor personal memories |
 
 ### Global config — `~/.config/cursor/supermemory.json`
 
@@ -59,7 +66,7 @@ User-wide defaults, applies to all projects.
 
 ```json
 {
-  "userContainerTag": "my-personal-tag",
+  "repoContainerTag": "repo_my_project__0123456789abcdef",
   "similarityThreshold": 0.3,
   "maxMemories": 10,
   "maxProjectMemories": 5,
@@ -74,8 +81,7 @@ Per-workspace overrides. Add to `.gitignore` if it contains an API key. Project 
 ```json
 {
   "apiKey": "sm_...",
-  "projectContainerTag": "my-team-backend",
-  "userContainerTag": "my-personal-tag",
+  "repoContainerTag": "repo_my_project__0123456789abcdef",
   "similarityThreshold": 0.3,
   "maxMemories": 10,
   "maxProjectMemories": 5,
@@ -86,8 +92,10 @@ Per-workspace overrides. Add to `.gitignore` if it contains an API key. Project 
 | Option | Description | Default |
 |---|---|---|
 | `apiKey` | Project-specific API key | — |
-| `userContainerTag` | Override personal memory container | auto-derived from git email / machine id |
-| `projectContainerTag` | Override project memory container | auto-derived from git root / cwd |
+| `baseUrl` | Override the Supermemory API base URL | Supermemory API |
+| `repoContainerTag` | Override the unified repository container | derived from normalized Git remote or project path |
+| `userContainerTag` | Legacy Cursor personal container to continue reading | — |
+| `projectContainerTag` | Legacy Cursor project container to continue reading | — |
 | `similarityThreshold` | Minimum similarity score for search results | `0.3` |
 | `maxMemories` | Max project memories injected at session start | `10` |
 | `maxProjectMemories` | Max project memories injected at session start | `5` |
@@ -97,12 +105,21 @@ You can set these via the AI using `supermemory_set_config`, or create/edit the 
 
 ## Container tags
 
-By default, container tags are derived automatically:
+Cursor, Claude Code, Codex, and OpenCode use the same repository tag:
 
-- **User tag** — hashed from your git email, `CURSOR_USER_EMAIL`, or machine id. Consistent across projects.
-- **Project tag** — hashed from your git repo root (or cwd). Consistent across team members on the same repo.
+```text
+repo_<project_name>__<project_id>
+```
 
-To share project memory with your team, set the same `projectContainerTag` in everyone's project config.
+The project ID is a stable hash of the normalized Git remote. Repositories
+without a remote fall back to their resolved local path. This prevents two
+different repositories with the same directory name from colliding while
+letting different agents share memory for the same repository.
+
+The plugin continues reading the former Cursor `cursor_user_*` and
+`cursor_project_*` tags, along with legacy tags from the other supported
+agents. New writes only use the unified repository tag. Set
+`repoContainerTag` only when you need an explicit shared override.
 
 ## Development
 

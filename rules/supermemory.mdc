@@ -11,6 +11,11 @@ You have access to Supermemory MCP tools for persistent memory across coding ses
 - `supermemory_list`: List recent memories for this project
 - `supermemory_forget`: Delete a specific memory by ID
 
+For every Supermemory tool call, pass `workspaceRoot` as the absolute path of
+the active Cursor workspace from the current agent context. Plugin MCP
+processes can be shared across windows, so the server process directory is not
+a reliable project identifier.
+
 When to use:
 - User mentions past sessions, previous work, or "last time" → search first
 - User says "remember", "save this", "don't forget" → add immediately

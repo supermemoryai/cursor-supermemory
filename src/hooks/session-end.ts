@@ -1,7 +1,10 @@
-import { loadCredentials } from "../auth.ts";
+import { createHash } from "node:crypto";
 import { loadConfig, getApiKey } from "../config.ts";
-import { getUserTag, getProjectTag } from "../tags.ts";
-import { createClient } from "../client.ts";
+import { getResolvedTags } from "../tags.ts";
+import {
+  AGENT_ENTITY_CONTEXT,
+  CursorMemoryClient,
+} from "../client.ts";
 
 interface SessionEndInput {
   session_id: string;
@@ -52,6 +55,11 @@ function parseTranscript(text: string): Turn[] {
     .filter(Boolean);
 }
 
+function captureId(sessionId: string): string {
+  const digest = createHash("sha256").update(sessionId).digest("hex");
+  return `cursor:capture:${digest}`;
+}
+
 async function main() {
   const raw = await Bun.stdin.text();
   const input: SessionEndInput = JSON.parse(raw);
@@ -62,9 +70,6 @@ async function main() {
   // ended abnormally ("aborted"/"error").
   const NON_PERSISTABLE_REASONS = new Set(["aborted", "error"]);
   if (!input.transcript_path || NON_PERSISTABLE_REASONS.has(input.reason ?? "")) return;
-
-  const creds = loadCredentials();
-  if (!creds) return;
 
   // Cursor spawns this hook from ~/.cursor, so process.cwd() is NOT the
   // workspace. Resolve config + project tag from workspace_roots[0] (as
@@ -85,20 +90,36 @@ async function main() {
   if (userTurns.length < 2) return;
 
   let transcript = relevant
-    .map((t) => `${t.role === "user" ? "User" : "Assistant"}: ${t.text}`)
+    .map(
+      (turn, index) =>
+        `${index + 1}. [${turn.role}] ${turn.text}`,
+    )
     .join("\n");
   if (transcript.length > 100_000) {
     transcript = transcript.slice(0, 100_000);
   }
 
-  const userTag = getUserTag(config);
-  const projectTag = getProjectTag(workspaceRoot, config);
-  const content = `Cursor IDE session transcript:\n${transcript}`;
+  const tags = getResolvedTags(workspaceRoot, config);
+  const content = `[Conversation ${input.session_id}]\n${transcript}`;
+  const client = new CursorMemoryClient(apiKey, config.baseUrl);
 
-  await Promise.allSettled([
-    createClient(apiKey, userTag).add({ content, containerTag: userTag }),
-    createClient(apiKey, projectTag).add({ content, containerTag: projectTag }),
-  ]);
+  await client.addMemory(
+    content,
+    tags.canonical,
+    {
+      type: "conversation",
+      project: tags.projectName,
+      sm_project_id: tags.projectId,
+      sm_scope: "personal",
+      sm_capture_mode: "session_end",
+      sessionId: input.session_id,
+      timestamp: new Date().toISOString(),
+    },
+    {
+      customId: captureId(input.session_id),
+      entityContext: AGENT_ENTITY_CONTEXT,
+    },
+  );
 }
 
 main().catch((err) => {
