@@ -16,6 +16,7 @@ import {
   CursorMemoryClient,
   type MemoryScope,
 } from "./client.ts";
+import { explicitMemoryMetadata } from "./metadata.ts";
 
 function getAuth(cwd = process.cwd()) {
   const config = loadConfig(cwd);
@@ -149,11 +150,11 @@ export function createMcpServer() {
                 writes: {
                   user: {
                     tag: auth.tags.canonical,
-                    sm_scope: "personal",
+                    agent_scope: "personal",
                   },
                   project: {
                     tag: auth.tags.canonical,
-                    sm_scope: "project",
+                    agent_scope: "project",
                   },
                 },
                 reads: {
@@ -233,7 +234,7 @@ export function createMcpServer() {
     {
       description:
         "Show the shared repository container and all compatibility read tags. " +
-        '"user" and "project" write to the same container with different sm_scope metadata.',
+        '"user" and "project" write to the same container with different agent_scope metadata.',
       inputSchema: { workspaceRoot: workspaceRootSchema },
     },
     async ({ workspaceRoot }) => {
@@ -252,13 +253,13 @@ export function createMcpServer() {
                 user: {
                   alias: "user",
                   tag: auth.tags.canonical,
-                  sm_scope: "personal",
+                  agent_scope: "personal",
                   reads: auth.tags.personalReads,
                 },
                 project: {
                   alias: "project",
                   tag: auth.tags.canonical,
-                  sm_scope: "project",
+                  agent_scope: "project",
                   reads: auth.tags.projectReads,
                 },
                 both: {
@@ -333,14 +334,12 @@ export function createMcpServer() {
       const result = await auth.client.addMemory(
         content,
         resolved.tag,
-        {
-          type: "memory",
+        explicitMemoryMetadata({
           project: auth.tags.projectName,
-          sm_project_id: auth.tags.projectId,
-          ...(resolved.scope ? { sm_scope: resolved.scope } : {}),
-          sm_capture_mode: "explicit",
+          projectId: auth.tags.projectId,
+          scope: resolved.scope,
           timestamp: new Date().toISOString(),
-        },
+        }),
         { entityContext: AGENT_ENTITY_CONTEXT },
       );
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };

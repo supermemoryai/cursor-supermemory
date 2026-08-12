@@ -1,12 +1,13 @@
 import { createHash, createHmac } from "node:crypto";
 import Supermemory from "supermemory";
+import type { AgentScope } from "./metadata.ts";
 
 const INTEGRITY_VERSION = 1;
 const SEED =
   "7f2a9c4b8e1d6f3a5c0b9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a";
 const CURSOR_SOURCE = "cursor";
 
-export type MemoryScope = "personal" | "project";
+export type MemoryScope = AgentScope;
 
 export const AGENT_ENTITY_CONTEXT = `Shared coding-agent memory for one software repository.
 
@@ -41,9 +42,9 @@ function integrityHeaders(apiKey: string, containerTag: string) {
   };
 }
 
-function scopeFilters(scope: MemoryScope) {
+export function scopeFilters(scope: MemoryScope) {
   return {
-    AND: [{ key: "sm_scope", value: scope, filterType: "metadata" as const }],
+    AND: [{ key: "agent_scope", value: scope, filterType: "metadata" as const }],
   };
 }
 
@@ -75,19 +76,6 @@ function resultDate(result: any): number {
   const value = result?.updatedAt ?? result?.createdAt;
   const parsed = value ? new Date(value).getTime() : 0;
   return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function resultMetadata(result: any): Record<string, unknown> {
-  if (result?.metadata && typeof result.metadata === "object") {
-    return result.metadata as Record<string, unknown>;
-  }
-  if (
-    result?.document?.metadata &&
-    typeof result.document.metadata === "object"
-  ) {
-    return result.document.metadata as Record<string, unknown>;
-  }
-  return {};
 }
 
 function listItems(result: any): any[] {
@@ -262,9 +250,16 @@ export class CursorMemoryClient {
         query,
         canonicalTag,
         limit,
-        supportsScopedCanonicalTag(canonicalTag) ? scope : undefined,
+        scope,
       ),
-      ...legacyTags.map((tag) => this.searchOne(query, tag, limit)),
+      ...legacyTags.map((tag) =>
+        this.searchOne(
+          query,
+          tag,
+          limit,
+          supportsScopedCanonicalTag(tag) ? scope : undefined,
+        ),
+      ),
     ]);
     return mergeSearchResults(
       fulfilledOrThrow(settled, "No memory containers could be searched"),
@@ -302,9 +297,15 @@ export class CursorMemoryClient {
       this.profileOne(
         canonicalTag,
         query,
-        supportsScopedCanonicalTag(canonicalTag) ? scope : undefined,
+        scope,
       ),
-      ...legacyTags.map((tag) => this.profileOne(tag, query)),
+      ...legacyTags.map((tag) =>
+        this.profileOne(
+          tag,
+          query,
+          supportsScopedCanonicalTag(tag) ? scope : undefined,
+        ),
+      ),
     ]);
     return mergeProfiles(
       fulfilledOrThrow(settled, "No memory profiles could be loaded"),
@@ -322,12 +323,9 @@ export class CursorMemoryClient {
       containerTags: [containerTag],
       limit,
       page,
+      filters: scope ? scopeFilters(scope) : undefined,
     });
-    if (!scope) return result;
-    const memories = listItems(result).filter(
-      (item) => resultMetadata(item).sm_scope === scope,
-    );
-    return { ...result, memories };
+    return result;
   }
 
   async listScoped(
@@ -347,11 +345,18 @@ export class CursorMemoryClient {
     const settled = await Promise.allSettled([
       this.listOne(
         canonicalTag,
-        Math.max(limit * 10, 100),
+        limit,
         page,
-        supportsScopedCanonicalTag(canonicalTag) ? scope : undefined,
+        scope,
       ),
-      ...legacyTags.map((tag) => this.listOne(tag, limit, page)),
+      ...legacyTags.map((tag) =>
+        this.listOne(
+          tag,
+          limit,
+          page,
+          supportsScopedCanonicalTag(tag) ? scope : undefined,
+        ),
+      ),
     ]);
     return mergeLists(
       fulfilledOrThrow(settled, "No memory containers could be listed"),

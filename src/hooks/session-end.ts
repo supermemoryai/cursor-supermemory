@@ -5,6 +5,7 @@ import {
   AGENT_ENTITY_CONTEXT,
   CursorMemoryClient,
 } from "../client.ts";
+import { sessionEndMemoryMetadata } from "../metadata.ts";
 
 interface SessionEndInput {
   session_id: string;
@@ -106,15 +107,12 @@ async function main() {
   await client.addMemory(
     content,
     tags.canonical,
-    {
-      type: "conversation",
+    sessionEndMemoryMetadata({
       project: tags.projectName,
-      sm_project_id: tags.projectId,
-      sm_scope: "personal",
-      sm_capture_mode: "session_end",
+      projectId: tags.projectId,
       sessionId: input.session_id,
       timestamp: new Date().toISOString(),
-    },
+    }),
     {
       customId: captureId(input.session_id),
       entityContext: AGENT_ENTITY_CONTEXT,
