@@ -44,8 +44,13 @@ All tools that accept a `container` argument support:
 - any custom string — used as a raw container tag
 
 `user` and `project` now write to the same repository container. The
-`sm_scope` metadata field keeps personal/session memories separate from
+`agent_scope` metadata field keeps personal/session memories separate from
 explicit project knowledge when an agent requests one scope.
+
+> **Release prerequisite:** Deploy and complete the backend `sm_scope` to
+> `agent_scope` metadata and vector backfill before releasing this plugin.
+> Canonical scoped reads rely on indexed `agent_scope`; legacy container tags
+> intentionally remain unfiltered for compatibility.
 
 ## Configuration
 
