@@ -11,4 +11,8 @@ bunx cursor-supermemory@latest login
 
 This opens your browser to connect your Supermemory account to Cursor. Once connected, the AI will have persistent memory across all your coding sessions.
 
-If the browser doesn't open automatically, visit: https://console.supermemory.ai/auth/connect?client=cursor
+To choose a different organization later, run:
+
+```bash
+bunx cursor-supermemory@latest switch-org
+```

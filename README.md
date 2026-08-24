@@ -18,6 +18,16 @@ If you only need to authenticate an existing install, run:
 bunx cursor-supermemory@latest login
 ```
 
+To connect Cursor to a different Supermemory organization, run:
+
+```bash
+bunx cursor-supermemory@latest switch-org
+```
+
+Choose the organization in your browser, then restart Cursor or run
+**Developer: Reload Window**. A failed or cancelled switch keeps the previously
+saved browser credential.
+
 ## What it does
 
 - **Session hooks** — injects relevant memories at session start; saves conversation highlights at session end
@@ -53,7 +63,7 @@ explicit project knowledge when an agent requests one scope.
 
 | Variable | Description |
 |---|---|
-| `SUPERMEMORY_API_KEY` | API key (overrides all other sources) |
+| `SUPERMEMORY_API_KEY` | API key (overrides browser-selected organizations and all other sources) |
 | `SUPERMEMORY_API_URL` | Override the Supermemory API base URL |
 | `SUPERMEMORY_REPO_TAG` | Override the unified repository container tag |
 | `SUPERMEMORY_USER_TAG` | Legacy Cursor personal container to continue reading |
