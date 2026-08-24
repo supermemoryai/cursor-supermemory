@@ -91,3 +91,25 @@ export function getApiKey(config: Config): string | null {
   const creds = loadCredentials();
   return creds?.apiKey ?? null;
 }
+
+export type ApiKeySource =
+  | "SUPERMEMORY_API_KEY"
+  | "project config"
+  | "global config"
+  | "browser credentials"
+  | "not configured";
+
+export function getApiKeySource(cwd = process.cwd()): ApiKeySource {
+  const config = loadConfig(cwd);
+  const effectiveKey = getApiKey(config);
+  if (!effectiveKey) return "not configured";
+  if (process.env.SUPERMEMORY_API_KEY === effectiveKey) {
+    return "SUPERMEMORY_API_KEY";
+  }
+
+  const projectConfig = findProjectConfig(cwd);
+  if (projectConfig?.apiKey === effectiveKey) return "project config";
+  const globalConfig = readJson(GLOBAL_CONFIG_PATH);
+  if (globalConfig?.apiKey === effectiveKey) return "global config";
+  return "browser credentials";
+}
