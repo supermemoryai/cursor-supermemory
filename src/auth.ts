@@ -58,6 +58,16 @@ export interface SessionIdentity {
   userEmail?: string;
 }
 
+export type BrowserAuthMode = "switch_organization";
+
+export function createBrowserAuthUrl(
+  callbackUrl: string,
+  mode?: BrowserAuthMode,
+): string {
+  const switchMode = mode ? `&mode=${encodeURIComponent(mode)}` : "";
+  return `${AUTH_URL}?callback=${encodeURIComponent(callbackUrl)}&client=cursor${switchMode}`;
+}
+
 export function parseAuthCallback(url: URL, expectedState: string): string {
   if (url.searchParams.get("state") !== expectedState) {
     throw new Error("Invalid callback state");
@@ -109,6 +119,7 @@ export async function startAuthFlow(
     process.env.SUPERMEMORY_API_URL ??
     process.env.SUPERMEMORY_BASE_URL ??
     DEFAULT_API_URL,
+  mode?: BrowserAuthMode,
 ): Promise<{
   success: boolean;
   apiKey?: string;
@@ -168,7 +179,7 @@ export async function startAuthFlow(
     });
 
     const callbackUrl = `http://127.0.0.1:${server.port}/callback?state=${state}`;
-    const authUrl = `${AUTH_URL}?callback=${encodeURIComponent(callbackUrl)}&client=cursor`;
+    const authUrl = createBrowserAuthUrl(callbackUrl, mode);
 
     process.stderr.write(`\nOpen this URL to connect Supermemory to Cursor:\n\n  ${authUrl}\n\nWaiting...\n`);
     const opener = process.platform === "win32" ? "start" : process.platform === "darwin" ? "open" : "xdg-open";

@@ -61,6 +61,7 @@ switch (command) {
     const result = await startAuthFlow(
       120_000,
       config.baseUrl ?? DEFAULT_API_URL,
+      "switch_organization",
     );
     if (!result.success) {
       console.error(`Organization switch failed: ${result.error}`);

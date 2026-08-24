@@ -1,5 +1,26 @@
 import { describe, expect, test } from "bun:test";
-import { parseAuthCallback, verifyApiKey } from "./auth.ts";
+import {
+  createBrowserAuthUrl,
+  parseAuthCallback,
+  verifyApiKey,
+} from "./auth.ts";
+
+describe("createBrowserAuthUrl", () => {
+  const callbackUrl =
+    "http://127.0.0.1:43210/callback?state=expected";
+
+  test("keeps normal login URLs free of switch intent", () => {
+    const authUrl = new URL(createBrowserAuthUrl(callbackUrl));
+    expect(authUrl.searchParams.get("mode")).toBeNull();
+  });
+
+  test("adds explicit intent for organization switching", () => {
+    const authUrl = new URL(
+      createBrowserAuthUrl(callbackUrl, "switch_organization"),
+    );
+    expect(authUrl.searchParams.get("mode")).toBe("switch_organization");
+  });
+});
 
 describe("parseAuthCallback", () => {
   test("accepts a state-bound plugin credential", () => {
