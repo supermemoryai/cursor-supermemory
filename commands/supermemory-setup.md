@@ -13,4 +13,4 @@ That opens a browser to connect your Supermemory account. Then reload the window
 
 Alternatively, set `SUPERMEMORY_API_KEY` in the environment (no login needed).
 
-If the browser doesn't open, visit: https://console.supermemory.ai/auth/connect?client=cursor
+If the browser doesn't open, visit: https://app.supermemory.ai/auth/connect?client=cursor

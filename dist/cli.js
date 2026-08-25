@@ -28351,7 +28351,7 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 var CREDENTIALS_DIR = path.join(os.homedir(), ".supermemory-cursor");
 var CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "credentials.json");
-var AUTH_URL = "https://console.supermemory.ai/auth/connect";
+var AUTH_URL = "https://app.supermemory.ai/auth/connect";
 var SUCCESS_HTML = `<!DOCTYPE html>
 <html><head><style>
   body { background: #111; color: #fff; font-family: system-ui; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }

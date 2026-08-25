@@ -8,7 +8,7 @@ import type { AddressInfo } from "node:net";
 
 const CREDENTIALS_DIR = path.join(os.homedir(), ".supermemory-cursor");
 const CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "credentials.json");
-const AUTH_URL = "https://console.supermemory.ai/auth/connect";
+const AUTH_URL = "https://app.supermemory.ai/auth/connect";
 
 const SUCCESS_HTML = `<!DOCTYPE html>
 <html><head><style>
