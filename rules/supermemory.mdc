@@ -1,26 +1,13 @@
 ---
-description: Supermemory persistent memory tools — use them proactively
+description: Supermemory for this Cursor workspace
 alwaysApply: true
 ---
 
-You have access to Supermemory MCP tools for persistent memory across coding sessions:
+Supermemory skills own when to search, save, and forget. Do not call those tools from this rule.
 
-- `supermemory_search`: Search before answering questions about previous work, bugs, or patterns
-- `supermemory_add`: Save decisions, fixes, preferences when user asks or when clearly valuable
-- `supermemory_profile`: Get aggregated user profile and preferences
-- `supermemory_list`: List recent memories for this project
-- `supermemory_forget`: Delete a specific memory by ID
+Every Supermemory tool call requires `workspaceRoot`: the absolute path of the active Cursor workspace. The MCP process directory is not the project.
 
-For every Supermemory tool call, pass `workspaceRoot` as the absolute path of
-the active Cursor workspace from the current agent context. Plugin MCP
-processes can be shared across windows, so the server process directory is not
-a reliable project identifier.
+`user` and `project` both write to this repository's container. They are not cross-project.
 
-When to use:
-- User mentions past sessions, previous work, or "last time" → search first
-- User says "remember", "save this", "don't forget" → add immediately
-- After solving a hard bug → save the solution and root cause
-- Discovering architectural patterns or conventions → save them
-- User asks why something was done a certain way → search for context
-
-Scope: use `project` for codebase-specific knowledge, `user` for cross-project preferences.
+- `"user"` — personal preferences and session history for this repository
+- `"project"` — durable project knowledge for this repository

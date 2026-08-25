@@ -22,7 +22,7 @@ function getAuth(cwd = process.cwd()) {
   const apiKey = getApiKey(config);
   if (!apiKey) {
     throw new Error(
-      "Not authenticated. Run `cursor-supermemory login` to connect.",
+      "Not authenticated. Run /supermemory-setup or set SUPERMEMORY_API_KEY.",
     );
   }
   const tags = getResolvedTags(cwd, config);
@@ -280,7 +280,7 @@ export function createMcpServer() {
     "supermemory_search",
     {
       description:
-        'Search memories. Use container="user" for personal, "project" for workspace, or pass a custom tag.',
+        'Search memories in this repository. Use container="user" for personal/session memory, "project" for durable project knowledge, or pass a custom tag. Always pass workspaceRoot.',
       inputSchema: {
         workspaceRoot: workspaceRootSchema,
         query: z.string(),
@@ -315,7 +315,7 @@ export function createMcpServer() {
     "supermemory_add",
     {
       description:
-        'Save information to memory. Use container="user" for personal, "project" for workspace, or a custom tag.',
+        'Save information to this repository. Use container="user" for personal/session memory, "project" for durable project knowledge. Always pass workspaceRoot.',
       inputSchema: {
         workspaceRoot: workspaceRootSchema,
         content: z.string(),

@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "supermemory": {
-      "command": "bunx",
-      "args": [ "cursor-supermemory@latest", "mcp"]
+      "command": "node",
+      "args": ["./dist/cli.js", "mcp"]
     }
   }
 }

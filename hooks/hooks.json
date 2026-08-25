@@ -3,14 +3,14 @@
     "sessionStart": [
       {
         "type": "command",
-        "command": "bun run \"${CURSOR_PLUGIN_ROOT}/dist/session-start.js\"",
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/dist/session-start.js\"",
         "timeout": 20
       }
     ],
     "sessionEnd": [
       {
         "type": "command",
-        "command": "bun run \"${CURSOR_PLUGIN_ROOT}/dist/session-end.js\"",
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/dist/session-end.js\"",
         "timeout": 30
       }
     ]

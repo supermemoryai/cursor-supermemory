@@ -1,10 +1,13 @@
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import http from "node:http";
+import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import type { AddressInfo } from "node:net";
 
 const CREDENTIALS_DIR = path.join(os.homedir(), ".supermemory-cursor");
 const CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "credentials.json");
-const AUTH_PORT = 19878;
 const AUTH_URL = "https://console.supermemory.ai/auth/connect";
 
 const SUCCESS_HTML = `<!DOCTYPE html>
@@ -42,48 +45,69 @@ export function clearCredentials(): boolean {
   }
 }
 
+function openBrowser(url: string): void {
+  const [cmd, args] =
+    process.platform === "darwin"
+      ? ["open", [url]]
+      : process.platform === "win32"
+        ? ["rundll32", ["url.dll,FileProtocolHandler", url]]
+        : ["xdg-open", [url]];
+  const child = spawn(cmd, args, { stdio: "ignore", detached: true });
+  child.on("error", () => {});
+  child.unref();
+}
+
 export async function startAuthFlow(
   timeoutMs = 120_000,
 ): Promise<{ success: boolean; apiKey?: string; error?: string }> {
   return new Promise((resolve) => {
     let settled = false;
+    const stateToken = randomBytes(16).toString("hex");
 
-    const server = Bun.serve({
-      port: AUTH_PORT,
-      hostname: "127.0.0.1",
-      fetch(req) {
-        const url = new URL(req.url);
-        if (url.pathname !== "/callback") {
-          return new Response("Not found", { status: 404 });
-        }
+    const server = http.createServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      if (url.pathname !== "/callback") {
+        res.writeHead(404).end("Not found");
+        return;
+      }
 
-        const apiKey = url.searchParams.get("apikey") || url.searchParams.get("api_key");
-        if (!apiKey?.startsWith("sm_")) {
-          return new Response("Invalid API key", { status: 400 });
-        }
+      if (url.searchParams.get("state") !== stateToken) {
+        res.writeHead(403, { Connection: "close" }).end("Invalid state");
+        return;
+      }
 
-        saveCredentials(apiKey);
-        settled = true;
-        server.stop();
-        clearTimeout(timer);
-        resolve({ success: true, apiKey });
+      const apiKey = url.searchParams.get("apikey") || url.searchParams.get("api_key");
+      if (!apiKey?.startsWith("sm_")) {
+        res.writeHead(400).end("Invalid API key");
+        return;
+      }
 
-        return new Response(SUCCESS_HTML, {
-          headers: { "Content-Type": "text/html" },
-        });
-      },
+      saveCredentials(apiKey);
+      settled = true;
+      res.writeHead(200, { "Content-Type": "text/html", Connection: "close" }).end(SUCCESS_HTML);
+      clearTimeout(timer);
+      server.close();
+      resolve({ success: true, apiKey });
     });
 
-    const callbackUrl = `http://localhost:${AUTH_PORT}/callback`;
-    const authUrl = `${AUTH_URL}?callback=${encodeURIComponent(callbackUrl)}&client=cursor`;
+    server.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ success: false, error: err.message });
+    });
 
-    process.stderr.write(`\nOpen this URL to connect Supermemory to Cursor:\n\n  ${authUrl}\n\nWaiting...\n`);
-    const opener = process.platform === "win32" ? "start" : process.platform === "darwin" ? "open" : "xdg-open";
-    Bun.$`${opener} ${authUrl}`.quiet().nothrow();
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as AddressInfo;
+      const callbackUrl = `http://127.0.0.1:${port}/callback?state=${stateToken}`;
+      const authUrl = `${AUTH_URL}?callback=${encodeURIComponent(callbackUrl)}&client=cursor`;
+      process.stderr.write(`\nOpen this URL to connect Supermemory to Cursor:\n\n  ${authUrl}\n\nWaiting...\n`);
+      openBrowser(authUrl);
+    });
 
     const timer = setTimeout(() => {
       if (!settled) {
-        server.stop();
+        server.close();
         resolve({ success: false, error: "Authentication timed out" });
       }
     }, timeoutMs);

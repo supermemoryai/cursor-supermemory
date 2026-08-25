@@ -3,12 +3,14 @@ name: supermemory-setup
 description: Connect Supermemory to Cursor for persistent AI memory
 ---
 
-Run the following command in the terminal to authenticate:
+Authenticate this plugin. Run:
 
 ```bash
-bunx cursor-supermemory@latest login
+node "${CURSOR_PLUGIN_ROOT}/dist/cli.js" login
 ```
 
-This opens your browser to connect your Supermemory account to Cursor. Once connected, the AI will have persistent memory across all your coding sessions.
+That opens a browser to connect your Supermemory account. Then reload the window (**Developer: Reload Window**).
 
-If the browser doesn't open automatically, visit: https://console.supermemory.ai/auth/connect?client=cursor
+Alternatively, set `SUPERMEMORY_API_KEY` in the environment (no login needed).
+
+If the browser doesn't open, visit: https://console.supermemory.ai/auth/connect?client=cursor

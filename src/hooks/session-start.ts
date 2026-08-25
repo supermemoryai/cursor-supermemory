@@ -2,6 +2,7 @@ import { loadConfig, getApiKey } from "../config.ts";
 import { getResolvedTags } from "../tags.ts";
 import { CursorMemoryClient } from "../client.ts";
 import { formatContext } from "../context.ts";
+import { readStdin } from "../stdin.ts";
 
 interface SessionStartInput {
   workspace_roots: string[];
@@ -12,7 +13,7 @@ interface SessionStartInput {
 const ok = () => process.stdout.write(JSON.stringify({ continue: true }));
 
 async function main() {
-  const raw = await Bun.stdin.text();
+  const raw = await readStdin();
   const input: SessionStartInput = JSON.parse(raw);
 
   const workspaceRoot = input.workspace_roots?.[0] || process.cwd();
@@ -20,7 +21,6 @@ async function main() {
   const apiKey = getApiKey(config);
   if (!apiKey) return ok();
 
-  // Inject user email from input for tag resolution
   if (input.user_email && !process.env.CURSOR_USER_EMAIL) {
     process.env.CURSOR_USER_EMAIL = input.user_email;
   }
@@ -28,7 +28,7 @@ async function main() {
   const tags = getResolvedTags(workspaceRoot, config);
   const client = new CursorMemoryClient(apiKey, config.baseUrl);
 
-  const [profileResult, memoriesResult] = await Promise.allSettled([
+  const [profileResult, personalResult, projectResult] = await Promise.allSettled([
     config.injectProfile
       ? client.profileScoped(
           tags.canonical,
@@ -40,20 +40,28 @@ async function main() {
       : Promise.resolve(null),
     client.listScoped(
       tags.canonical,
+      tags.personalReads,
+      "personal",
+      config.maxMemories,
+    ),
+    client.listScoped(
+      tags.canonical,
       tags.projectReads,
       "project",
       config.maxProjectMemories,
     ),
   ]);
 
-  const profile =
-    profileResult.status === "fulfilled" && profileResult.value
-      ? profileResult.value.profile
-      : null;
-  const memories =
-    memoriesResult.status === "fulfilled" ? (memoriesResult.value.memories ?? []) : [];
-
-  const context = formatContext(profile, memories);
+  const context = formatContext({
+    profile:
+      profileResult.status === "fulfilled" && profileResult.value
+        ? profileResult.value.profile
+        : null,
+    personal:
+      personalResult.status === "fulfilled" ? (personalResult.value.memories ?? []) : [],
+    project:
+      projectResult.status === "fulfilled" ? (projectResult.value.memories ?? []) : [],
+  });
   if (!context) return ok();
 
   process.stdout.write(JSON.stringify({

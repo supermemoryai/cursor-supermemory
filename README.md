@@ -4,25 +4,19 @@ Persistent AI memory for Cursor — powered by [Supermemory](https://supermemory
 
 ## Install
 
-Install the Cursor integration package:
+1. Install **cursor-supermemory** from the [Cursor Marketplace](https://cursor.com/marketplace).
+2. Authenticate with `/supermemory-setup` (browser login), or set `SUPERMEMORY_API_KEY`.
+3. Reload the window (**Developer: Reload Window**).
 
-```bash
-npm install cursor-supermemory@latest
-```
-
-After it finishes, restart Cursor or run **Developer: Reload Window**.
-
-If you only need to authenticate an existing install, run:
-
-```bash
-bunx cursor-supermemory@latest login
-```
+The plugin is the distribution. MCP and hooks run from this repo's `dist/` with Node — nothing is published to npm.
 
 ## What it does
 
-- **Session hooks** — injects relevant memories at session start; saves conversation highlights at session end
+- **Session hooks** — injects profile, recent personal/session memories, and project knowledge at session start; saves conversation highlights at session end
 - **MCP tools** — available in every Cursor AI session for explicit memory control
-- **Always-on rule** — reminds the AI to use memory tools proactively
+- **Skills** — search, save, and forget load from trigger descriptions (when prior context would help, when to evaluate a save, when to delete)
+- **Index command** — `/supermemory-index` for a batch codebase index
+- **Always-on rule** — `workspaceRoot` plus what `user` / `project` mean; skills own when to act
 
 ## MCP Tools
 
@@ -37,15 +31,15 @@ bunx cursor-supermemory@latest login
 | `supermemory_forget` | Delete a memory by id or content |
 | `supermemory_profile` | Get your user profile summary |
 
+Every tool requires `workspaceRoot` (absolute path of the active Cursor workspace).
+
 All tools that accept a `container` argument support:
-- `"user"` (default) — personal memories for the current repository
-- `"project"` — project knowledge for the current repository
-- `"both"` — both scopes plus compatible legacy memories
+- `"user"` (default) — personal preferences and session history for this repository
+- `"project"` — durable project knowledge for this repository
+- `"both"` — both scopes plus compatible legacy memories (read-only)
 - any custom string — used as a raw container tag
 
-`user` and `project` now write to the same repository container. The
-`sm_scope` metadata field keeps personal/session memories separate from
-explicit project knowledge when an agent requests one scope.
+`user` and `project` write to the same repository container. The `sm_scope` metadata field keeps personal/session memories separate from explicit project knowledge.
 
 ## Configuration
 
@@ -96,9 +90,9 @@ Per-workspace overrides. Add to `.gitignore` if it contains an API key. Project 
 | `repoContainerTag` | Override the unified repository container | derived from normalized Git remote or project path |
 | `userContainerTag` | Legacy Cursor personal container to continue reading | — |
 | `projectContainerTag` | Legacy Cursor project container to continue reading | — |
-| `similarityThreshold` | Minimum similarity score for search results | `0.3` |
-| `maxMemories` | Max project memories injected at session start | `10` |
-| `maxProjectMemories` | Max project memories injected at session start | `5` |
+| `similarityThreshold` | Stored for compatibility; search does not currently apply it | `0.3` |
+| `maxMemories` | Max personal/session memories injected at session start | `10` |
+| `maxProjectMemories` | Max project-knowledge memories injected at session start | `5` |
 | `injectProfile` | Whether to inject user profile at session start | `true` |
 
 You can set these via the AI using `supermemory_set_config`, or create/edit the file manually.
@@ -125,15 +119,13 @@ agents. New writes only use the unified repository tag. Set
 
 ```bash
 bun install
-bun run build   # compiles all dist/ files
+bun run build   # compiles all dist/ files — commit them; the marketplace plugin runs from dist/
 ```
 
 ### Testing from this repo
 
 1. **Open this repo in Cursor** — rules, commands, skills, and hooks are picked up from `.cursor-plugin`.
 2. **Build:** `bun run build`
-3. **Use the local MCP server** — `.cursor/mcp.json` in this repo points to `dist/` automatically.
-4. **Log in:** `bun run src/cli.ts login`
+3. **Use the local MCP server** — `.cursor/mcp.json` in this repo points to `./dist/cli.js`.
+4. **Log in:** `/supermemory-setup`, or `bun run src/cli.ts login` from this repo
 5. **Restart Cursor** after changing `.cursor/mcp.json`.
-
-To test in a different project, add the `supermemory` entry from `.cursor/mcp.json` to that project's MCP config with an absolute path to `dist/mcp-server.js`.

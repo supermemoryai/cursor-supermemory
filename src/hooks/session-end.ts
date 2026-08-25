@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { loadConfig, getApiKey } from "../config.ts";
 import { getResolvedTags } from "../tags.ts";
 import {
   AGENT_ENTITY_CONTEXT,
   CursorMemoryClient,
 } from "../client.ts";
+import { readStdin } from "../stdin.ts";
 
 interface SessionEndInput {
   session_id: string;
@@ -61,7 +63,7 @@ function captureId(sessionId: string): string {
 }
 
 async function main() {
-  const raw = await Bun.stdin.text();
+  const raw = await readStdin();
   const input: SessionEndInput = JSON.parse(raw);
 
   // Persist on any normal session end that produced a transcript. Cursor sends
@@ -79,7 +81,7 @@ async function main() {
   const apiKey = getApiKey(config);
   if (!apiKey) return;
 
-  const fileContent = await Bun.file(input.transcript_path).text();
+  const fileContent = await readFile(input.transcript_path, "utf-8");
   const turns = parseTranscript(fileContent);
 
   const relevant = turns

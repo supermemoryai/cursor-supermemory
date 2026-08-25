@@ -13,39 +13,60 @@ function formatRelativeTime(dateStr: string): string {
   return `${Math.floor(weeks)}w ago`;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function stringFacts(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function formatMemoryLine(memory: unknown): string {
+  const item = asRecord(memory) ?? {};
+  const time =
+    typeof item.updatedAt === "string" ? `[${formatRelativeTime(item.updatedAt)}] ` : "";
+  const body =
+    (typeof item.memory === "string" && item.memory) ||
+    (typeof item.content === "string" && item.content) ||
+    (typeof item.summary === "string" && item.summary) ||
+    "";
+  const label = typeof item.title === "string" && item.title ? `${item.title}: ` : "";
+  return `- ${time}${label}${body}`;
+}
+
+export interface SessionContext {
+  profile?: { static?: unknown; dynamic?: unknown } | null;
+  personal?: unknown[];
+  project?: unknown[];
+}
+
 export function formatContext(
-  profile: any,
-  memories: any[],
+  input: SessionContext,
   maxLength = MAX_LENGTH,
 ): string {
-  const profileItems: string[] = [
-    ...(Array.isArray(profile?.static) ? profile.static : []),
-    ...(Array.isArray(profile?.dynamic) ? profile.dynamic : []),
+  const profileItems = [
+    ...stringFacts(input.profile?.static),
+    ...stringFacts(input.profile?.dynamic),
   ];
-  const hasProfile = profileItems.length > 0;
-  const hasMemories = memories?.length > 0;
+  const personal = input.personal ?? [];
+  const project = input.project ?? [];
 
-  if (!hasProfile && !hasMemories) return "";
+  if (profileItems.length === 0 && personal.length === 0 && project.length === 0) {
+    return "";
+  }
 
   const sections: string[] = ["[SUPERMEMORY CONTEXT]"];
 
-  if (hasProfile) {
-    sections.push(
-      "\nUser Profile:",
-      ...profileItems.map((item: string) => `- ${item}`),
-    );
+  if (profileItems.length > 0) {
+    sections.push("\nUser Profile:", ...profileItems.map((item) => `- ${item}`));
   }
-
-  if (hasMemories) {
-    sections.push(
-      "\nProject Knowledge:",
-      ...memories.map((m: any) => {
-        const time = m.updatedAt ? `[${formatRelativeTime(m.updatedAt)}] ` : "";
-        const body = m.memory ?? m.content ?? m.summary ?? "";
-        const label = m.title ? `${m.title}: ` : "";
-        return `- ${time}${label}${body}`;
-      }),
-    );
+  if (personal.length > 0) {
+    sections.push("\nRecent Sessions:", ...personal.map(formatMemoryLine));
+  }
+  if (project.length > 0) {
+    sections.push("\nProject Knowledge:", ...project.map(formatMemoryLine));
   }
 
   sections.push("\nUse these memories when relevant. Don't force them into every response.");

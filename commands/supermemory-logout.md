@@ -3,10 +3,10 @@ name: supermemory-logout
 description: Disconnect Supermemory from Cursor
 ---
 
-Run the following command to remove your Supermemory credentials:
+Run:
 
 ```bash
-bunx cursor-supermemory@latest logout
+node "${CURSOR_PLUGIN_ROOT}/dist/cli.js" logout
 ```
 
-Your credentials will be removed from ~/.supermemory-cursor/credentials.json. Your memories in Supermemory are not deleted.
+Credentials are removed from ~/.supermemory-cursor/credentials.json. Memories in Supermemory are not deleted.

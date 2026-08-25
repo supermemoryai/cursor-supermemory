@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { startMcpServer } from "./mcp-server.ts";
 import {
   loadCredentials,
@@ -41,7 +42,7 @@ switch (command) {
       console.log(`Authenticated since ${creds.createdAt}`);
       console.log(`API key: ${creds.apiKey.slice(0, 6)}...${creds.apiKey.slice(-4)}`);
     } else {
-      console.log("Not authenticated. Run `cursor-supermemory login` to connect.");
+      console.log("Not authenticated. Run /supermemory-setup or set SUPERMEMORY_API_KEY.");
     }
     break;
   }
