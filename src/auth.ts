@@ -5,7 +5,7 @@ import fs from "node:fs";
 const CREDENTIALS_DIR = path.join(os.homedir(), ".supermemory-cursor");
 const CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "credentials.json");
 const AUTH_PORT = 19878;
-const AUTH_URL = "https://console.supermemory.ai/auth/connect";
+const AUTH_URL = "https://app.supermemory.ai/auth/connect";
 
 const SUCCESS_HTML = `<!DOCTYPE html>
 <html><head><style>
