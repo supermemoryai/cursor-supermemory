@@ -15,3 +15,7 @@ test("formats and deduplicates Claude-style session context", () => {
   expect(context).toContain("- ◪ Fixing auth");
   expect(context).toContain("repo_example__1234");
 });
+
+test("does not claim memory is empty when no profile facts are ready", () => {
+  expect(formatSessionContext([], 5, "repo_example__1234", "example")).toBe("");
+});

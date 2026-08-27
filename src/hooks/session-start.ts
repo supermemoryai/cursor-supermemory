@@ -60,11 +60,9 @@ async function main() {
     tags.projectName,
   );
 
-  process.stdout.write(JSON.stringify({
-    additional_context:
-      context ||
-      `<supermemory-context>\nNo previous memories found for this project (container: ${tags.canonical}). Memories will be saved as you work.\n</supermemory-context>`,
-  }));
+  process.stdout.write(
+    JSON.stringify(context ? { additional_context: context } : {}),
+  );
 }
 
 main().catch((err) => {
