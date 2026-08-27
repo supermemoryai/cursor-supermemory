@@ -1,17 +1,42 @@
 {
+  "version": 1,
   "hooks": {
     "sessionStart": [
       {
-        "type": "command",
-        "command": "bun run \"${CURSOR_PLUGIN_ROOT}/dist/session-start.js\"",
-        "timeout": 20
+        "command": "bun run \"${CURSOR_PLUGIN_ROOT}/src/hooks/session-start.ts\"",
+        "timeout": 5
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "bun run \"${CURSOR_PLUGIN_ROOT}/src/hooks/prompt-recall.ts\"",
+        "matcher": "UserPromptSubmit",
+        "timeout": 5
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "bun run \"${CURSOR_PLUGIN_ROOT}/src/hooks/approve-memory.ts\"",
+        "matcher": "MCP:.*supermemory.*|supermemory_.*",
+        "timeout": 5
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "bun run \"${CURSOR_PLUGIN_ROOT}/src/hooks/inject-recall.ts\"",
+        "timeout": 5
+      }
+    ],
+    "stop": [
+      {
+        "command": "bun run \"${CURSOR_PLUGIN_ROOT}/src/hooks/capture.ts\"",
+        "timeout": 5
       }
     ],
     "sessionEnd": [
       {
-        "type": "command",
-        "command": "bun run \"${CURSOR_PLUGIN_ROOT}/dist/session-end.js\"",
-        "timeout": 30
+        "command": "bun run \"${CURSOR_PLUGIN_ROOT}/src/hooks/capture.ts\"",
+        "timeout": 5
       }
     ]
   }

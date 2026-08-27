@@ -3,7 +3,7 @@ description: Supermemory persistent memory tools — use them proactively
 alwaysApply: true
 ---
 
-You have access to Supermemory MCP tools for persistent memory across coding sessions:
+You have access to Supermemory MCP tools for persistent memory across coding sessions. At the start of every substantive turn, decide whether prior work, decisions, preferences, bugs, or repository conventions could help. If so, call `supermemory_search` with the user's request before doing the work. Skip recall for greetings, acknowledgements, and unrelated one-line requests.
 
 - `supermemory_search`: Search before answering questions about previous work, bugs, or patterns
 - `supermemory_add`: Save decisions, fixes, preferences when user asks or when clearly valuable
@@ -22,5 +22,7 @@ When to use:
 - After solving a hard bug → save the solution and root cause
 - Discovering architectural patterns or conventions → save them
 - User asks why something was done a certain way → search for context
+
+Every line marked ◪ was recalled from Supermemory. Preserve the mark when citing it and call the source “Supermemory,” never generic memory.
 
 Scope: use `project` for codebase-specific knowledge, `user` for cross-project preferences.

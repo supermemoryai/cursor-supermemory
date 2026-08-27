@@ -4,6 +4,9 @@ import {
   startAuthFlow,
   clearCredentials,
 } from "./auth.ts";
+import { loadConfig, getApiKey } from "./config.ts";
+import { getProfile } from "./hook-api.ts";
+import { getResolvedTags } from "./tags.ts";
 
 const command = process.argv[2];
 
@@ -36,12 +39,31 @@ switch (command) {
   }
 
   case "status": {
-    const creds = loadCredentials();
-    if (creds) {
-      console.log(`Authenticated since ${creds.createdAt}`);
-      console.log(`API key: ${creds.apiKey.slice(0, 6)}...${creds.apiKey.slice(-4)}`);
-    } else {
+    const config = loadConfig();
+    const apiKey = getApiKey(config);
+    if (!apiKey) {
       console.log("Not authenticated. Run `cursor-supermemory login` to connect.");
+      break;
+    }
+    const credentials = loadCredentials();
+    if (credentials?.createdAt) {
+      console.log(`Authenticated since ${credentials.createdAt}`);
+    }
+    console.log(`API key: ${apiKey.slice(0, 6)}...${apiKey.slice(-4)}`);
+    try {
+      const tags = getResolvedTags(process.cwd(), config);
+      await getProfile(
+        config.baseUrl,
+        apiKey,
+        tags.canonical,
+        "connectivity probe",
+      );
+      console.log(`Connected to Supermemory (${tags.canonical}).`);
+    } catch (error) {
+      console.error(
+        `Supermemory is unreachable: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      process.exitCode = 1;
     }
     break;
   }

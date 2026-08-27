@@ -1,13 +1,13 @@
 {
   "name": "cursor-supermemory",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Persistent AI memory for Cursor — powered by Supermemory",
   "type": "module",
   "bin": {
     "cursor-supermemory": "./dist/cli.js"
   },
   "scripts": {
-    "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node && bun build ./src/mcp-server.ts --outfile ./dist/mcp-server.js --target node && bun build ./src/hooks/session-start.ts --outfile ./dist/session-start.js --target node && bun build ./src/hooks/session-end.ts --outfile ./dist/session-end.js --target node",
+    "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node && bun build ./src/mcp-server.ts --outfile ./dist/mcp-server.js --target node && bun build ./src/hooks/session-start.ts --outfile ./dist/session-start.js --target node && bun build ./src/hooks/prompt-recall.ts --outfile ./dist/prompt-recall.js --target node && bun build ./src/hooks/inject-recall.ts --outfile ./dist/inject-recall.js --target node && bun build ./src/hooks/approve-memory.ts --outfile ./dist/approve-memory.js --target node && bun build ./src/hooks/capture.ts --outfile ./dist/capture.js --target node",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "dev": "bun run src/cli.ts"
@@ -20,7 +20,7 @@
     "@types/bun": "latest",
     "typescript": "^5"
   },
-  "files": ["dist", "rules", "skills", "commands", "hooks", ".cursor-plugin", ".mcp.json"],
+  "files": ["dist", "src", "rules", "skills", "agents", "commands", "hooks", ".cursor-plugin", "mcp.json"],
   "keywords": ["cursor", "supermemory", "mcp", "memory", "ai", "plugin"],
   "license": "MIT",
   "repository": {
