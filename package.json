@@ -10,7 +10,8 @@
     "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node && bun build ./src/mcp-server.ts --outfile ./dist/mcp-server.js --target node && bun build ./src/hooks/session-start.ts --outfile ./dist/session-start.js --target node && bun build ./src/hooks/prompt-recall.ts --outfile ./dist/prompt-recall.js --target node && bun build ./src/hooks/inject-recall.ts --outfile ./dist/inject-recall.js --target node && bun build ./src/hooks/approve-memory.ts --outfile ./dist/approve-memory.js --target node && bun build ./src/hooks/capture.ts --outfile ./dist/capture.js --target node",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "dev": "bun run src/cli.ts"
+    "dev": "bun run src/cli.ts",
+    "sync": "bun run build && rsync -a --delete --exclude .git ./ ~/.cursor/plugins/local/cursor-supermemory/"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",

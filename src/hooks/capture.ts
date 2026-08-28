@@ -12,6 +12,7 @@ import {
   type CursorHookInput,
   workspaceRoot,
 } from "./types.ts";
+import { isMainModule, readTextFile, runHook } from "../runtime.ts";
 
 interface TranscriptEntry {
   content?: unknown;
@@ -138,7 +139,7 @@ async function capture(input: CursorHookInput): Promise<void> {
 
     const id = conversationId(input);
     const state = readHookState(id);
-    const entries = parseTranscript(await Bun.file(transcriptPath).text());
+    const entries = parseTranscript(await readTextFile(transcriptPath));
     const capturedEntries =
       state.transcriptPath === transcriptPath ? state.capturedEntries ?? 0 : 0;
     const start = capturedEntries <= entries.length ? capturedEntries : 0;
@@ -198,7 +199,6 @@ export async function runCapture(input: CursorHookInput): Promise<void> {
   }
 }
 
-if (import.meta.main) {
-  const input = (await Bun.stdin.json()) as CursorHookInput;
-  await runCapture(input);
+if (isMainModule(import.meta.url)) {
+  await runHook<CursorHookInput>(runCapture, {});
 }

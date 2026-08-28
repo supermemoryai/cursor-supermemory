@@ -1,6 +1,8 @@
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import http from "node:http";
+import { spawn } from "node:child_process";
 
 const CREDENTIALS_DIR = path.join(os.homedir(), ".supermemory-cursor");
 const CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "credentials.json");
@@ -42,50 +44,69 @@ export function clearCredentials(): boolean {
   }
 }
 
+function openBrowser(url: string): void {
+  const platform = process.platform;
+  const command =
+    platform === "win32" ? "cmd" : platform === "darwin" ? "open" : "xdg-open";
+  const args = platform === "win32" ? ["/c", "start", "", url] : [url];
+  spawn(command, args, { stdio: "ignore", detached: true }).unref();
+}
+
 export async function startAuthFlow(
   timeoutMs = 120_000,
 ): Promise<{ success: boolean; apiKey?: string; error?: string }> {
   return new Promise((resolve) => {
     let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-    const server = Bun.serve({
-      port: AUTH_PORT,
-      hostname: "127.0.0.1",
-      fetch(req) {
-        const url = new URL(req.url);
-        if (url.pathname !== "/callback") {
-          return new Response("Not found", { status: 404 });
-        }
+    const finish = (result: { success: boolean; apiKey?: string; error?: string }) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      server.close();
+      resolve(result);
+    };
 
-        const apiKey = url.searchParams.get("apikey") || url.searchParams.get("api_key");
-        if (!apiKey?.startsWith("sm_")) {
-          return new Response("Invalid API key", { status: 400 });
-        }
+    const server = http.createServer((req, res) => {
+      const url = new URL(req.url ?? "/", `http://127.0.0.1:${AUTH_PORT}`);
+      if (url.pathname !== "/callback") {
+        res.writeHead(404);
+        res.end("Not found");
+        return;
+      }
 
-        saveCredentials(apiKey);
-        settled = true;
-        server.stop();
-        clearTimeout(timer);
-        resolve({ success: true, apiKey });
+      const apiKey = url.searchParams.get("apikey") || url.searchParams.get("api_key");
+      if (!apiKey?.startsWith("sm_")) {
+        res.writeHead(400);
+        res.end("Invalid API key");
+        return;
+      }
 
-        return new Response(SUCCESS_HTML, {
-          headers: { "Content-Type": "text/html" },
-        });
-      },
+      saveCredentials(apiKey);
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(SUCCESS_HTML);
+      finish({ success: true, apiKey });
     });
 
-    const callbackUrl = `http://localhost:${AUTH_PORT}/callback`;
-    const authUrl = `${AUTH_URL}?callback=${encodeURIComponent(callbackUrl)}&client=cursor`;
+    server.on("error", (error: NodeJS.ErrnoException) => {
+      const detail =
+        error.code === "EADDRINUSE"
+          ? `Port ${AUTH_PORT} is already in use`
+          : error.message;
+      finish({ success: false, error: detail });
+    });
 
-    process.stderr.write(`\nOpen this URL to connect Supermemory to Cursor:\n\n  ${authUrl}\n\nWaiting...\n`);
-    const opener = process.platform === "win32" ? "start" : process.platform === "darwin" ? "open" : "xdg-open";
-    Bun.$`${opener} ${authUrl}`.quiet().nothrow();
+    server.listen(AUTH_PORT, "127.0.0.1", () => {
+      const callbackUrl = `http://localhost:${AUTH_PORT}/callback`;
+      const authUrl = `${AUTH_URL}?callback=${encodeURIComponent(callbackUrl)}&client=cursor`;
+      process.stderr.write(
+        `\nOpen this URL to connect Supermemory to Cursor:\n\n  ${authUrl}\n\nWaiting...\n`,
+      );
+      openBrowser(authUrl);
+    });
 
-    const timer = setTimeout(() => {
-      if (!settled) {
-        server.stop();
-        resolve({ success: false, error: "Authentication timed out" });
-      }
+    timer = setTimeout(() => {
+      finish({ success: false, error: "Authentication timed out" });
     }, timeoutMs);
   });
 }

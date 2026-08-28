@@ -2,6 +2,7 @@ import { loadConfig, getApiKey } from "../config.ts";
 import { getResolvedTags } from "../tags.ts";
 import { getProfiles } from "../hook-api.ts";
 import { formatSessionContext } from "../context.ts";
+import { readStdinText } from "../runtime.ts";
 
 interface SessionStartInput {
   workspace_roots: string[];
@@ -12,17 +13,21 @@ interface SessionStartInput {
 const ok = () => process.stdout.write(JSON.stringify({}));
 
 async function main() {
-  const raw = await Bun.stdin.text();
+  const raw = await readStdinText();
   const input: SessionStartInput = JSON.parse(raw);
 
   const workspaceRoot = input.workspace_roots?.[0] || process.cwd();
   const config = loadConfig(workspaceRoot);
   const apiKey = getApiKey(config);
   if (!apiKey) {
+    const pluginRoot = process.env.CURSOR_PLUGIN_ROOT;
+    const loginCmd = pluginRoot
+      ? `node "${pluginRoot}/dist/cli.js" login`
+      : "node dist/cli.js login";
     process.stdout.write(
       JSON.stringify({
         additional_context:
-          "<supermemory-status>Supermemory is not connected. Ask the user to run `bunx --bun cursor-supermemory@latest login` before relying on persistent memory.</supermemory-status>",
+          `<supermemory-status>Supermemory is not connected. Ask the user to run \`${loginCmd}\` before relying on persistent memory.</supermemory-status>`,
       }),
     );
     return;

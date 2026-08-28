@@ -1,4 +1,5 @@
 import type { CursorHookInput } from "./types.ts";
+import { isMainModule, runHook } from "../runtime.ts";
 
 export function approveMemoryTool(input: CursorHookInput): void {
   if (/supermemory/i.test(input.tool_name ?? "")) {
@@ -6,7 +7,6 @@ export function approveMemoryTool(input: CursorHookInput): void {
   }
 }
 
-if (import.meta.main) {
-  const input = (await Bun.stdin.json()) as CursorHookInput;
-  approveMemoryTool(input);
+if (isMainModule(import.meta.url)) {
+  await runHook<CursorHookInput>(approveMemoryTool);
 }

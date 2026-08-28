@@ -33,7 +33,7 @@ export interface Config {
 
 const DEFAULTS: Omit<Config, "apiKey"> = {
   baseUrl: null,
-  similarityThreshold: 0.3,
+  similarityThreshold: 0.55,
   maxMemories: 10,
   maxProjectMemories: 5,
   injectProfile: true,

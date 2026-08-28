@@ -38,7 +38,7 @@ afterAll(() => {
 });
 
 async function runHook(file: string, input: Record<string, unknown>) {
-  const child = Bun.spawn([process.execPath, join(root, file)], {
+  const child = Bun.spawn(["node", join(root, file)], {
     cwd: workspace,
     env: {
       ...Bun.env,
@@ -71,16 +71,46 @@ describe("Cursor hook integration", () => {
       prompt: "continue fixing the authentication flow",
       workspace_roots: [workspace],
     };
-    expect(JSON.parse(await runHook("src/hooks/prompt-recall.ts", input))).toEqual({
+    expect(JSON.parse(await runHook("dist/prompt-recall.js", input))).toEqual({
       continue: true,
     });
     const output = JSON.parse(
-      await runHook("src/hooks/inject-recall.ts", input),
+      await runHook("dist/inject-recall.js", input),
     );
     expect(output.additional_context).toContain(
       "- ◪ The auth flow uses rotating tokens",
     );
-    expect(await runHook("src/hooks/inject-recall.ts", input)).toBe("");
+    expect(await runHook("dist/inject-recall.js", input)).toBe("");
+  });
+
+  test("keeps queued recall across a skipped follow-up prompt", async () => {
+    const input = {
+      conversation_id: "conversation-recall-skip",
+      generation_id: "generation-keep",
+      prompt: "continue fixing the authentication flow",
+      workspace_roots: [workspace],
+    };
+    expect(JSON.parse(await runHook("dist/prompt-recall.js", input))).toEqual({
+      continue: true,
+    });
+    expect(
+      JSON.parse(
+        await runHook("dist/prompt-recall.js", {
+          ...input,
+          generation_id: "generation-skip",
+          prompt: "hi",
+        }),
+      ),
+    ).toEqual({ continue: true });
+    const output = JSON.parse(
+      await runHook("dist/inject-recall.js", {
+        ...input,
+        generation_id: "generation-later",
+      }),
+    );
+    expect(output.additional_context).toContain(
+      "- ◪ The auth flow uses rotating tokens",
+    );
   });
 
   test("captures only unsaved transcript entries", async () => {
@@ -112,8 +142,8 @@ describe("Cursor hook integration", () => {
     const savesBefore = requests.filter(
       (request) => request.path === "/v3/documents",
     ).length;
-    await runHook("src/hooks/capture.ts", input);
-    await runHook("src/hooks/capture.ts", input);
+    await runHook("dist/capture.js", input);
+    await runHook("dist/capture.js", input);
     const saves = requests.filter(
       (request) => request.path === "/v3/documents",
     );

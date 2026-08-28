@@ -8,6 +8,7 @@ import {
   type CursorHookInput,
   workspaceRoot,
 } from "./types.ts";
+import { isMainModule, runHook } from "../runtime.ts";
 
 const MIN_PROMPT_LENGTH = 12;
 const MAX_QUERY_LENGTH = 500;
@@ -99,14 +100,6 @@ ${lines.join("\n")}
 }
 
 export async function runPromptRecall(input: CursorHookInput): Promise<void> {
-  const id = conversationId(input);
-  const previousState = readHookState(id);
-  if (previousState.pendingContext || previousState.pendingGeneration) {
-    writeHookState(id, {
-      pendingContext: undefined,
-      pendingGeneration: undefined,
-    });
-  }
   const prompt = input.prompt;
   if (shouldSkipPrompt(prompt)) {
     process.stdout.write(JSON.stringify({ continue: true }));
@@ -122,12 +115,13 @@ export async function runPromptRecall(input: CursorHookInput): Promise<void> {
       return;
     }
 
+    const id = conversationId(input);
     const state = readHookState(id);
     const tags = getResolvedTags(root, config);
     const profiles = await getProfiles(
       config.baseUrl,
       apiKey,
-      [tags.canonical],
+      tags.allReads,
       prompt!.slice(0, MAX_QUERY_LENGTH),
     );
     const { fresh, hashes } = selectRecallResults(
@@ -135,13 +129,16 @@ export async function runPromptRecall(input: CursorHookInput): Promise<void> {
       state.seenHashes ?? [],
       Math.max(MIN_SIMILARITY, config.similarityThreshold),
     );
-    if (fresh.length > 0) {
-      writeHookState(id, {
-        pendingContext: formatRecall(fresh, tags.canonical),
-        pendingGeneration: input.generation_id,
-        seenHashes: hashes,
-      });
-    }
+    writeHookState(
+      id,
+      fresh.length > 0
+        ? {
+            pendingContext: formatRecall(fresh, tags.canonical),
+            pendingGeneration: input.generation_id,
+            seenHashes: hashes,
+          }
+        : { pendingContext: undefined, pendingGeneration: undefined },
+    );
   } catch (error) {
     if (process.env.SUPERMEMORY_DEBUG === "true") {
       console.error("[supermemory] recall failed:", error);
@@ -150,7 +147,6 @@ export async function runPromptRecall(input: CursorHookInput): Promise<void> {
   process.stdout.write(JSON.stringify({ continue: true }));
 }
 
-if (import.meta.main) {
-  const input = (await Bun.stdin.json()) as CursorHookInput;
-  await runPromptRecall(input);
+if (isMainModule(import.meta.url)) {
+  await runHook<CursorHookInput>(runPromptRecall);
 }
