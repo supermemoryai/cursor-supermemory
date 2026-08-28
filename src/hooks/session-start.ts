@@ -1,7 +1,8 @@
 import { loadConfig, getApiKey } from "../config.ts";
 import { getResolvedTags } from "../tags.ts";
-import { CursorMemoryClient } from "../client.ts";
-import { formatContext } from "../context.ts";
+import { getProfiles } from "../hook-api.ts";
+import { formatSessionContext } from "../context.ts";
+import { readStdinText } from "../runtime.ts";
 
 interface SessionStartInput {
   workspace_roots: string[];
@@ -9,16 +10,28 @@ interface SessionStartInput {
   session_id: string;
 }
 
-const ok = () => process.stdout.write(JSON.stringify({ continue: true }));
+const ok = () => process.stdout.write(JSON.stringify({}));
 
 async function main() {
-  const raw = await Bun.stdin.text();
+  const raw = await readStdinText();
   const input: SessionStartInput = JSON.parse(raw);
 
   const workspaceRoot = input.workspace_roots?.[0] || process.cwd();
   const config = loadConfig(workspaceRoot);
   const apiKey = getApiKey(config);
-  if (!apiKey) return ok();
+  if (!apiKey) {
+    const pluginRoot = process.env.CURSOR_PLUGIN_ROOT;
+    const loginCmd = pluginRoot
+      ? `node "${pluginRoot}/dist/cli.js" login`
+      : "node dist/cli.js login";
+    process.stdout.write(
+      JSON.stringify({
+        additional_context:
+          `<supermemory-status>Supermemory is not connected. Ask the user to run \`${loginCmd}\` before relying on persistent memory.</supermemory-status>`,
+      }),
+    );
+    return;
+  }
 
   // Inject user email from input for tag resolution
   if (input.user_email && !process.env.CURSOR_USER_EMAIL) {
@@ -26,43 +39,35 @@ async function main() {
   }
 
   const tags = getResolvedTags(workspaceRoot, config);
-  const client = new CursorMemoryClient(apiKey, config.baseUrl);
-
-  const [profileResult, memoriesResult] = await Promise.allSettled([
-    config.injectProfile
-      ? client.profileScoped(
-          tags.canonical,
-          tags.personalReads,
-          "personal",
-          undefined,
-          config.maxMemories,
+  let profiles: any[] = [];
+  try {
+    profiles = config.injectProfile
+      ? await getProfiles(
+          config.baseUrl,
+          apiKey,
+          tags.allReads,
+          tags.projectName,
         )
-      : Promise.resolve(null),
-    client.listScoped(
-      tags.canonical,
-      tags.projectReads,
-      "project",
-      config.maxProjectMemories,
-    ),
-  ]);
+      : [];
+  } catch {
+    process.stdout.write(
+      JSON.stringify({
+        additional_context:
+          "<supermemory-status>Supermemory could not be reached. Continue without memory, and do not assume this project has no saved memories.</supermemory-status>",
+      }),
+    );
+    return;
+  }
+  const context = formatSessionContext(
+    profiles,
+    config.maxMemories,
+    tags.canonical,
+    tags.projectName,
+  );
 
-  const profile =
-    profileResult.status === "fulfilled" && profileResult.value
-      ? profileResult.value.profile
-      : null;
-  const memories =
-    memoriesResult.status === "fulfilled" ? (memoriesResult.value.memories ?? []) : [];
-
-  const context = formatContext(profile, memories);
-  if (!context) return ok();
-
-  process.stdout.write(JSON.stringify({
-    continue: true,
-    hookSpecificOutput: {
-      hookEventName: "sessionStart",
-      additionalContext: context,
-    },
-  }));
+  process.stdout.write(
+    JSON.stringify(context ? { additional_context: context } : {}),
+  );
 }
 
 main().catch((err) => {

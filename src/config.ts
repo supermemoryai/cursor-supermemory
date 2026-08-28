@@ -23,6 +23,9 @@ export interface Config {
   maxMemories: number;
   maxProjectMemories: number;
   injectProfile: boolean;
+  signalExtraction: boolean;
+  signalKeywords: string[];
+  signalTurnsBefore: number;
   repoContainerTag: string | null;
   userContainerTag: string | null;
   projectContainerTag: string | null;
@@ -30,10 +33,13 @@ export interface Config {
 
 const DEFAULTS: Omit<Config, "apiKey"> = {
   baseUrl: null,
-  similarityThreshold: 0.3,
+  similarityThreshold: 0.55,
   maxMemories: 10,
   maxProjectMemories: 5,
   injectProfile: true,
+  signalExtraction: false,
+  signalKeywords: ["remember", "architecture", "decision", "bug", "fix"],
+  signalTurnsBefore: 3,
   repoContainerTag: null,
   userContainerTag: null,
   projectContainerTag: null,
@@ -79,6 +85,13 @@ export function loadConfig(cwd?: string): Config {
     maxMemories: merged.maxMemories,
     maxProjectMemories: merged.maxProjectMemories,
     injectProfile: merged.injectProfile,
+    signalExtraction: merged.signalExtraction,
+    signalKeywords: Array.isArray(merged.signalKeywords)
+      ? merged.signalKeywords.filter(
+          (keyword: unknown): keyword is string => typeof keyword === "string",
+        )
+      : DEFAULTS.signalKeywords,
+    signalTurnsBefore: merged.signalTurnsBefore,
     repoContainerTag: merged.repoContainerTag,
     userContainerTag: merged.userContainerTag,
     projectContainerTag: merged.projectContainerTag,

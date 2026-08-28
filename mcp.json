@@ -2,7 +2,7 @@
   "mcpServers": {
     "supermemory": {
       "command": "node",
-      "args": ["${workspaceFolder}/dist/cli.js", "mcp"]
+      "args": ["${CURSOR_PLUGIN_ROOT}/dist/cli.js", "mcp"]
     }
   }
 }

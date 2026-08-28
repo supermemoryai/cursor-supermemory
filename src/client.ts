@@ -1,5 +1,6 @@
 import { createHash, createHmac } from "node:crypto";
 import Supermemory from "supermemory";
+export { AGENT_ENTITY_CONTEXT } from "./hook-api.ts";
 
 const INTEGRITY_VERSION = 1;
 const SEED =
@@ -7,22 +8,6 @@ const SEED =
 const CURSOR_SOURCE = "cursor";
 
 export type MemoryScope = "personal" | "project";
-
-export const AGENT_ENTITY_CONTEXT = `Shared coding-agent memory for one software repository.
-
-RULES:
-- Preserve durable context that helps Claude Code, Codex, OpenCode, or Cursor continue the work
-- Condense assistant responses into decisions, outcomes, and reusable knowledge
-- Keep user preferences and project facts concise and independently understandable
-
-EXTRACT:
-- User preferences, accepted decisions, durable workflows, actions, and learnings
-- Architecture, conventions, implementation patterns, setup requirements, and decisions
-
-SKIP:
-- Generic assistant suggestions the user did not accept
-- Transient command output and low-value implementation chatter
-- Granular details that do not help future work`;
 
 function sha256(input: string): string {
   return createHash("sha256").update(input).digest("hex");

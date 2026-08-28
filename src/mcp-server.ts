@@ -139,6 +139,9 @@ export function createMcpServer() {
                   maxMemories: auth.config.maxMemories,
                   maxProjectMemories: auth.config.maxProjectMemories,
                   injectProfile: auth.config.injectProfile,
+                  signalExtraction: auth.config.signalExtraction,
+                  signalKeywords: auth.config.signalKeywords,
+                  signalTurnsBefore: auth.config.signalTurnsBefore,
                   baseUrl: auth.config.baseUrl ?? "(default API)",
                 },
                 project: {
@@ -204,6 +207,9 @@ export function createMcpServer() {
         maxMemories: z.number().int().positive().optional(),
         maxProjectMemories: z.number().int().positive().optional(),
         injectProfile: z.boolean().optional(),
+        signalExtraction: z.boolean().optional(),
+        signalKeywords: z.array(z.string()).optional(),
+        signalTurnsBefore: z.number().int().positive().optional(),
       },
     },
     async ({ workspaceRoot, scope, ...updates }) => {

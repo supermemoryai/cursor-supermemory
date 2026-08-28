@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "supermemory": {
-      "command": "bunx",
-      "args": ["--bun", "cursor-supermemory@latest", "mcp"]
-    }
-  }
-}

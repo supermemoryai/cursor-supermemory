@@ -1,16 +1,41 @@
 {
+  "version": 1,
   "hooks": {
     "sessionStart": [
       {
-        "type": "command",
-        "command": "bun run \"${CURSOR_PLUGIN_ROOT}/dist/session-start.js\"",
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/dist/session-start.js\"",
+        "timeout": 20
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/dist/prompt-recall.js\"",
+        "matcher": "UserPromptSubmit",
+        "timeout": 20
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/dist/approve-memory.js\"",
+        "matcher": "MCP:.*supermemory.*|supermemory_.*",
+        "timeout": 5
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/dist/inject-recall.js\"",
+        "timeout": 5
+      }
+    ],
+    "stop": [
+      {
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/dist/capture.js\"",
         "timeout": 20
       }
     ],
     "sessionEnd": [
       {
-        "type": "command",
-        "command": "bun run \"${CURSOR_PLUGIN_ROOT}/dist/session-end.js\"",
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/dist/capture.js\"",
         "timeout": 30
       }
     ]

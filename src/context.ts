@@ -1,58 +1,40 @@
-const MAX_LENGTH = 2000;
-
-function formatRelativeTime(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const minutes = diff / 60_000;
-  const hours = diff / 3_600_000;
-  const days = diff / 86_400_000;
-  const weeks = diff / 604_800_000;
-
-  if (minutes < 60) return `${Math.floor(minutes)}m ago`;
-  if (hours < 24) return `${Math.floor(hours)}h ago`;
-  if (days < 7) return `${Math.floor(days)}d ago`;
-  return `${Math.floor(weeks)}w ago`;
-}
-
-export function formatContext(
-  profile: any,
-  memories: any[],
-  maxLength = MAX_LENGTH,
+export function formatSessionContext(
+  profiles: any[],
+  maxItems: number,
+  containerTag: string,
+  projectName: string,
 ): string {
-  const profileItems: string[] = [
-    ...(Array.isArray(profile?.static) ? profile.static : []),
-    ...(Array.isArray(profile?.dynamic) ? profile.dynamic : []),
-  ];
-  const hasProfile = profileItems.length > 0;
-  const hasMemories = memories?.length > 0;
+  const statics = [
+    ...new Set(
+      profiles.flatMap((result) =>
+        Array.isArray(result?.profile?.static) ? result.profile.static : [],
+      ),
+    ),
+  ].slice(0, maxItems);
+  const dynamics = [
+    ...new Set(
+      profiles.flatMap((result) =>
+        Array.isArray(result?.profile?.dynamic) ? result.profile.dynamic : [],
+      ),
+    ),
+  ].slice(0, maxItems);
+  if (statics.length === 0 && dynamics.length === 0) return "";
 
-  if (!hasProfile && !hasMemories) return "";
-
-  const sections: string[] = ["[SUPERMEMORY CONTEXT]"];
-
-  if (hasProfile) {
+  const sections: string[] = [];
+  if (statics.length > 0) {
     sections.push(
-      "\nUser Profile:",
-      ...profileItems.map((item: string) => `- ${item}`),
+      `## User Profile (Persistent)\n${statics.map((fact) => `- ◪ ${fact}`).join("\n")}`,
     );
   }
-
-  if (hasMemories) {
+  if (dynamics.length > 0) {
     sections.push(
-      "\nProject Knowledge:",
-      ...memories.map((m: any) => {
-        const time = m.updatedAt ? `[${formatRelativeTime(m.updatedAt)}] ` : "";
-        const body = m.memory ?? m.content ?? m.summary ?? "";
-        const label = m.title ? `${m.title}: ` : "";
-        return `- ${time}${label}${body}`;
-      }),
+      `## Recent Context\n${dynamics.map((fact) => `- ◪ ${fact}`).join("\n")}`,
     );
   }
+  return `<supermemory-context>
+Recalled memory for this project (${projectName}). Every line marked ◪ comes from Supermemory. Preserve the mark when citing one, and call the source “Supermemory,” never generic memory.
+This project's memory container: ${containerTag}
 
-  sections.push("\nUse these memories when relevant. Don't force them into every response.");
-
-  let result = sections.join("\n");
-  if (result.length > maxLength) {
-    result = result.slice(0, maxLength - 3) + "...";
-  }
-  return result;
+${sections.join("\n\n")}
+</supermemory-context>`;
 }
