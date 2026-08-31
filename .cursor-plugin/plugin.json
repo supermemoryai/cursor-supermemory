@@ -2,7 +2,7 @@
   "name": "cursor-supermemory",
   "displayName": "Supermemory",
   "description": "Persistent AI memory for Cursor — powered by Supermemory",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "author": {
     "name": "Supermemory",
     "email": "dhravya@supermemory.com"
