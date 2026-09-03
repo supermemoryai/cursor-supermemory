@@ -28,14 +28,6 @@ Open **Customize** in Cursor, find **Supermemory**, select **Install**, and choo
 project or user scope. Restart Cursor or run **Developer: Reload Window** after
 installation.
 
-Connect your Supermemory account:
-
-```bash
-node "${CURSOR_PLUGIN_ROOT}/dist/cli.js" login
-```
-
-If `CURSOR_PLUGIN_ROOT` is unset, run `node dist/cli.js login` from the installed plugin
-directory. The same CLI also has `logout` and `status`; see [Commands](#commands).
 
 ## Features
 
