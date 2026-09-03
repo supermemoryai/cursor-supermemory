@@ -6,7 +6,6 @@
 
 [![version](https://img.shields.io/github/package-json/v/supermemoryai/cursor-supermemory?label=version&color=9C5C10)](https://github.com/supermemoryai/cursor-supermemory)
 [![license](https://img.shields.io/badge/license-MIT-9C5C10)](#license)
-[![Cursor](https://img.shields.io/badge/Cursor-hooks_%2B_MCP-9C5C10)](https://github.com/supermemoryai/cursor-supermemory)
 
 </div>
 
