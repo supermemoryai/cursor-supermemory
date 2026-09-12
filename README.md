@@ -11,10 +11,11 @@ Open **Customize** in Cursor, find **Supermemory**, select **Install**, and choo
 Connect your Supermemory account:
 
 ```bash
-node "${CURSOR_PLUGIN_ROOT}/dist/cli.js" login
+node "$(ls -d ~/.cursor/plugins/local/cursor-supermemory ~/.cursor/plugins/cache/*/cursor-supermemory/*/ 2>/dev/null | head -1)/dist/cli.js" login
 ```
 
-If `CURSOR_PLUGIN_ROOT` is unset, run `node dist/cli.js login` from the installed plugin directory.
+Cursor only sets `CURSOR_PLUGIN_ROOT` for plugin hooks, so the command above finds
+the install itself and works from any directory.
 
 ## What it does
 
@@ -38,6 +39,15 @@ Claude Code and Codex use the same server, so all three agents see one tool set:
 | `listMemories` | List recent memories with their IDs |
 | `listDocuments` / `getDocument` | Browse and read stored documents |
 | `listSpaces` / `whoAmI` | Resolve a named space, or report the active account and space |
+| `save-memory` / `guided-save` | Alternate save flows exposed by the hosted server |
+| `upload-file` / `prepare-file-upload` | Attach a file to a space |
+| `memory-graph` / `fetch-graph-data` | Explore the memory graph |
+| `select-space` / `set-active-tag` | Change the account's active space |
+
+The first five rows are what the bundled rule, skills, and agent use. The rest
+come from the hosted server and appear in `tools/list` as well; the two
+`select-space` / `set-active-tag` tools change account-wide state, so prefer
+passing `containerTag` per call over switching the active space.
 
 Pass `containerTag` on every call, using the tag from the
 `<supermemory-context>` block the session-start hook injects. Without it the
@@ -156,11 +166,12 @@ when that resolved, and otherwise from `~/.cursor/plugins`. Nothing to run.
 For the second half, set `SUPERMEMORY_API_KEY` in the agent environment. That
 is the only required Cloud Agent step.
 
-If an environment reaches neither — no `~/.cursor/plugins` copy and no usable
-`CURSOR_PLUGIN_ROOT` — register an absolute entry from the install step:
+If an environment installs the plugin somewhere else entirely — no
+`~/.cursor/plugins` copy and no usable `CURSOR_PLUGIN_ROOT` — run this from the
+plugin directory to register an absolute entry:
 
 ```bash
-node "$(dirname "$0")/dist/cli.js" mcp-install
+node dist/cli.js mcp-install
 ```
 
 It writes a `supermemory` entry with an absolute path into `~/.cursor/mcp.json`,
