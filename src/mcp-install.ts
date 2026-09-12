@@ -4,10 +4,7 @@ import path from "node:path";
 
 export const GLOBAL_MCP_PATH = path.join(os.homedir(), ".cursor", "mcp.json");
 
-// Cloud Agents pass the plugin's mcp.json through to the exec daemon without
-// expanding ${CURSOR_PLUGIN_ROOT}, so the plugin-provided entry never starts.
-// Writing an absolute path into the user-level config gives those environments
-// a working entry that overrides nothing else in the file.
+// For environments that resolve neither CURSOR_PLUGIN_ROOT nor a ~/.cursor/plugins copy.
 export function writeGlobalMcpEntry(
   cliPath: string,
   configPath = GLOBAL_MCP_PATH,

@@ -1,6 +1,4 @@
-// The hosted MCP server writes to the account's active space unless a call
-// names one, while the hooks read and write this repository's container. Both
-// sides only see the same memories when the agent passes this tag explicitly.
+// Without an explicit tag the hosted server writes to the active space, where hook recall never looks.
 export function formatContainerDirective(containerTag: string): string {
   return `This project's memory container: ${containerTag}. Pass \`containerTag: "${containerTag}"\` on every Supermemory MCP call (search_memory, add_memory, listMemories) so tool memories and session recall stay in the same space.`;
 }

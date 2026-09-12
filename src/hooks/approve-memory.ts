@@ -1,9 +1,6 @@
 import type { CursorHookInput } from "./types.ts";
 import { isMainModule, runHook } from "../runtime.ts";
 
-// Cursor prefixes MCP tool names with the server, but the prefix format varies
-// by version, so also recognise the hosted server's read-only tools by their
-// bare names. Writes are only auto-approved when the server name is present.
 const READ_ONLY_TOOLS = [
   "search_memory",
   "listMemories",
@@ -13,6 +10,7 @@ const READ_ONLY_TOOLS = [
   "whoAmI",
 ];
 
+// Cursor's server-name prefix varies by version, so match bare names too; writes still need the prefix.
 function isReadOnlyMemoryTool(toolName: string): boolean {
   return READ_ONLY_TOOLS.some((name) => {
     if (toolName === name) return true;

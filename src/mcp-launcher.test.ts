@@ -6,8 +6,7 @@ import path from "node:path";
 const launcher = JSON.parse(fs.readFileSync("mcp.json", "utf-8")).mcpServers
   .supermemory as { command: string; args: string[] };
 
-// The launcher is inlined in mcp.json because Cloud Agents cannot expand a path
-// to a script file, so nothing else typechecks it. These run it as Cursor would.
+// The launcher is a JSON string, so nothing else typechecks it.
 function runLauncher(home: string, envRoot: string) {
   return Bun.spawnSync({
     cmd: [process.execPath, ...launcher.args],
