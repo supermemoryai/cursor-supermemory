@@ -147,12 +147,20 @@ To test in a different project, add the `supermemory` entry from `.cursor/mcp.js
 ## Cloud Agents
 
 Cursor Cloud Agents pass the plugin's `mcp.json` to the exec daemon without
-expanding `${CURSOR_PLUGIN_ROOT}`, so the plugin-provided entry cannot start,
-and they have no browser for the login flow. Set `SUPERMEMORY_API_KEY` in the
-agent environment and run this once in the environment's install step:
+expanding `${CURSOR_PLUGIN_ROOT}`, and they have no browser for the login flow.
+
+The `mcp.json` entry handles the first half on its own: it launches `node -e`
+with no path of its own, then locates the install from `CURSOR_PLUGIN_ROOT`
+when that resolved, and otherwise from `~/.cursor/plugins`. Nothing to run.
+
+For the second half, set `SUPERMEMORY_API_KEY` in the agent environment. That
+is the only required Cloud Agent step.
+
+If an environment reaches neither — no `~/.cursor/plugins` copy and no usable
+`CURSOR_PLUGIN_ROOT` — register an absolute entry from the install step:
 
 ```bash
-node "${CURSOR_PLUGIN_ROOT:-.}/dist/cli.js" mcp-install
+node "$(dirname "$0")/dist/cli.js" mcp-install
 ```
 
 It writes a `supermemory` entry with an absolute path into `~/.cursor/mcp.json`,
