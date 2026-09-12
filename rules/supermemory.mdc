@@ -3,18 +3,17 @@ description: Supermemory persistent memory tools — use them proactively
 alwaysApply: true
 ---
 
-You have access to Supermemory MCP tools for persistent memory across coding sessions. At the start of every substantive turn, decide whether prior work, decisions, preferences, bugs, or repository conventions could help. If so, call `supermemory_search` with the user's request before doing the work. Skip recall for greetings, acknowledgements, and unrelated one-line requests.
+You have access to Supermemory MCP tools for persistent memory across coding sessions. At the start of every substantive turn, decide whether prior work, decisions, preferences, bugs, or repository conventions could help. If so, call `search_memory` with the user's request before doing the work. Skip recall for greetings, acknowledgements, and unrelated one-line requests.
 
-- `supermemory_search`: Search before answering questions about previous work, bugs, or patterns
-- `supermemory_add`: Save decisions, fixes, preferences when user asks or when clearly valuable
-- `supermemory_profile`: Get aggregated user profile and preferences
-- `supermemory_list`: List recent memories for this project
-- `supermemory_forget`: Delete a specific memory by ID
+- `search_memory`: Search before answering questions about previous work, bugs, or patterns. The result also carries the container's profile summary.
+- `add_memory`: Save decisions, fixes, and preferences when the user asks or when they are clearly valuable. Use its `forget` mode to remove outdated memories.
+- `listMemories`: List recent memories for this project, with their IDs.
+- `listSpaces` / `whoAmI`: Resolve a space the user names, or report which account and space are active.
 
-For every Supermemory tool call, pass `workspaceRoot` as the absolute path of
-the active Cursor workspace from the current agent context. Plugin MCP
-processes can be shared across windows, so the server process directory is not
-a reliable project identifier.
+Pass `containerTag` on every call, using the container tag from the
+`<supermemory-context>` block injected at session start. Without it the hosted
+server writes to the account's active space, where this project's session
+recall will not find the memory.
 
 When to use:
 - User mentions past sessions, previous work, or "last time" → search first
@@ -24,5 +23,3 @@ When to use:
 - User asks why something was done a certain way → search for context
 
 Every line marked ◪ was recalled from Supermemory. Preserve the mark when citing it and call the source “Supermemory,” never generic memory.
-
-Scope: use `project` for codebase-specific knowledge, `user` for cross-project preferences.

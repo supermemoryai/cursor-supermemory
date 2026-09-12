@@ -1,3 +1,10 @@
+// The hosted MCP server writes to the account's active space unless a call
+// names one, while the hooks read and write this repository's container. Both
+// sides only see the same memories when the agent passes this tag explicitly.
+export function formatContainerDirective(containerTag: string): string {
+  return `This project's memory container: ${containerTag}. Pass \`containerTag: "${containerTag}"\` on every Supermemory MCP call (search_memory, add_memory, listMemories) so tool memories and session recall stay in the same space.`;
+}
+
 export function formatSessionContext(
   profiles: any[],
   maxItems: number,
@@ -33,7 +40,7 @@ export function formatSessionContext(
   }
   return `<supermemory-context>
 Recalled memory for this project (${projectName}). Every line marked ◪ comes from Supermemory. Preserve the mark when citing one, and call the source “Supermemory,” never generic memory.
-This project's memory container: ${containerTag}
+${formatContainerDirective(containerTag)}
 
 ${sections.join("\n\n")}
 </supermemory-context>`;

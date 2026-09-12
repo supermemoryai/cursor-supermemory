@@ -12,6 +12,7 @@ import os from "node:os";
 import fs from "node:fs";
 var CREDENTIALS_DIR = path.join(os.homedir(), ".supermemory-cursor");
 var CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "credentials.json");
+var AUTH_URL = process.env.SUPERMEMORY_AUTH_URL || "https://console.supermemory.ai/auth/connect";
 function loadCredentials() {
   try {
     if (!fs.existsSync(CREDENTIALS_FILE))

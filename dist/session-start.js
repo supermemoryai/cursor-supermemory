@@ -9,6 +9,7 @@ import os from "node:os";
 import fs from "node:fs";
 var CREDENTIALS_DIR = path.join(os.homedir(), ".supermemory-cursor");
 var CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "credentials.json");
+var AUTH_URL = process.env.SUPERMEMORY_AUTH_URL || "https://console.supermemory.ai/auth/connect";
 function loadCredentials() {
   try {
     if (!fs.existsSync(CREDENTIALS_FILE))
@@ -487,6 +488,9 @@ async function getProfiles(baseUrl, apiKey, tags, query, canonicalScope) {
 }
 
 // src/context.ts
+function formatContainerDirective(containerTag) {
+  return `This project's memory container: ${containerTag}. Pass \`containerTag: "${containerTag}"\` on every Supermemory MCP call (search_memory, add_memory, listMemories) so tool memories and session recall stay in the same space.`;
+}
 function formatSessionContext(profiles, maxItems, containerTag, projectName) {
   const statics = [
     ...new Set(profiles.flatMap((result) => Array.isArray(result?.profile?.static) ? result.profile.static : []))
@@ -509,7 +513,7 @@ ${dynamics.map((fact) => `- ◪ ${fact}`).join(`
   }
   return `<supermemory-context>
 Recalled memory for this project (${projectName}). Every line marked ◪ comes from Supermemory. Preserve the mark when citing one, and call the source “Supermemory,” never generic memory.
-This project's memory container: ${containerTag}
+${formatContainerDirective(containerTag)}
 
 ${sections.join(`
 
@@ -556,7 +560,11 @@ async function main() {
     return;
   }
   const context = formatSessionContext(profiles, config.maxMemories, tags.canonical, tags.projectName);
-  process.stdout.write(JSON.stringify(context ? { additional_context: context } : {}));
+  process.stdout.write(JSON.stringify({
+    additional_context: context || `<supermemory-context>
+${formatContainerDirective(tags.canonical)}
+</supermemory-context>`
+  }));
 }
 main().catch((err) => {
   console.error("[supermemory] session-start error:", err);

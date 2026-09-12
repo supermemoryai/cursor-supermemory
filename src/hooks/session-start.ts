@@ -1,7 +1,7 @@
 import { loadConfig, getApiKey } from "../config.ts";
 import { getResolvedTags } from "../tags.ts";
 import { getProfiles } from "../hook-api.ts";
-import { formatSessionContext } from "../context.ts";
+import { formatContainerDirective, formatSessionContext } from "../context.ts";
 import { readStdinText } from "../runtime.ts";
 
 interface SessionStartInput {
@@ -66,7 +66,11 @@ async function main() {
   );
 
   process.stdout.write(
-    JSON.stringify(context ? { additional_context: context } : {}),
+    JSON.stringify({
+      additional_context:
+        context ||
+        `<supermemory-context>\n${formatContainerDirective(tags.canonical)}\n</supermemory-context>`,
+    }),
   );
 }
 
