@@ -42,8 +42,24 @@ async function runHook(handler, fallback = { continue: true }) {
 }
 
 // src/hooks/approve-memory.ts
+var READ_ONLY_TOOLS = [
+  "search_memory",
+  "listMemories",
+  "listDocuments",
+  "getDocument",
+  "listSpaces",
+  "whoAmI"
+];
+function isReadOnlyMemoryTool(toolName) {
+  return READ_ONLY_TOOLS.some((name) => {
+    if (toolName === name)
+      return true;
+    return toolName.endsWith(name) && /[/:_]$/.test(toolName.slice(0, -name.length));
+  });
+}
 function approveMemoryTool(input) {
-  if (/supermemory/i.test(input.tool_name ?? "")) {
+  const toolName = input.tool_name ?? "";
+  if (/supermemory/i.test(toolName) || isReadOnlyMemoryTool(toolName)) {
     process.stdout.write(JSON.stringify({ permission: "allow" }));
   }
 }

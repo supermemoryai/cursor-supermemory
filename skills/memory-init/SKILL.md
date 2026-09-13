@@ -7,7 +7,5 @@ description: Deep codebase exploration to initialize project memory. Use when st
 2. Identify: tech stack, framework, architecture patterns, key directories
 3. Find conventions: naming, testing approach, build system, deployment
 4. Read core files to understand data models and business logic
-5. Save architecture summary: call `supermemory_add` with type=architecture
-6. Save tech stack: call `supermemory_add` with type=project-config
-7. Save key conventions: call `supermemory_add` with type=learned-pattern
-8. Confirm: "Codebase indexed — [N] memories saved about [project name]"
+5. Save the architecture summary, the tech stack, and the key conventions with separate `add_memory` calls, each passing the container tag from the `<supermemory-context>` block injected at session start
+6. Confirm: "Codebase indexed — [N] memories saved about [project name]"

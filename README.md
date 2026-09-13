@@ -4,49 +4,59 @@ Persistent AI memory for Cursor — powered by [Supermemory](https://supermemory
 
 ## Installation
 
-> Requires [Node.js](https://nodejs.org) on your PATH. Hooks and MCP run the plugin's bundled `dist/` with Node. Bun is only needed to *build* the plugin.
+> Requires [Node.js](https://nodejs.org) on your PATH. Hooks and the MCP proxy run the plugin's bundled `dist/` with Node. Bun is only needed to *build* the plugin.
 
 Open **Customize** in Cursor, find **Supermemory**, select **Install**, and choose a project or user scope. Restart Cursor or run **Developer: Reload Window** after installation.
 
 Connect your Supermemory account:
 
 ```bash
-node "${CURSOR_PLUGIN_ROOT}/dist/cli.js" login
+node "$(ls -d ~/.cursor/plugins/local/cursor-supermemory ~/.cursor/plugins/cache/*/cursor-supermemory/*/ 2>/dev/null | head -1)/dist/cli.js" login
 ```
 
-If `CURSOR_PLUGIN_ROOT` is unset, run `node dist/cli.js login` from the installed plugin directory.
+Cursor only sets `CURSOR_PLUGIN_ROOT` for plugin hooks, so the command above finds
+the install itself and works from any directory.
 
 ## What it does
 
 - **Session context** — loads your persistent profile when a Cursor conversation starts
 - **Automatic recall** — searches on substantive prompts, deduplicates results, and injects them after the first tool result supported by Cursor
 - **Incremental capture** — saves each completed turn and retries unsaved transcript deltas at session end
-- **MCP tools** — available in every Cursor AI session for explicit memory control
+- **MCP tools** — the hosted Supermemory tools, proxied over stdio for explicit memory control
 - **Context gatherer** — fans out targeted searches before substantial work
 - **Always-on rule** — makes the agent recall relevant history proactively
 
 ## MCP Tools
 
+The plugin proxies the hosted Supermemory MCP server (`https://mcp.supermemory.ai/mcp`)
+over stdio, using the same credentials as the hooks — one login covers both.
+Claude Code and Codex use the same server, so all three agents see one tool set:
+
 | Tool | Description |
 |---|---|
-| `supermemory_get_config` | Show current config, resolved container tags, and config file paths |
-| `supermemory_set_config` | Update config at project or global scope |
-| `supermemory_containers` | Show what `user` and `project` container tags resolve to |
-| `supermemory_search` | Search memories by query |
-| `supermemory_add` | Save new information to memory |
-| `supermemory_list` | List stored memories |
-| `supermemory_forget` | Delete a memory by id or content |
-| `supermemory_profile` | Get your user profile summary |
+| `search_memory` | Search memories in one container, with that container's profile summary |
+| `add_memory` | Save a memory, or forget one that is outdated |
+| `listMemories` | List recent memories with their IDs |
+| `listDocuments` / `getDocument` | Browse and read stored documents |
+| `listSpaces` / `whoAmI` | Resolve a named space, or report the active account and space |
+| `save-memory` / `guided-save` | Alternate save flows exposed by the hosted server |
+| `upload-file` / `prepare-file-upload` | Attach a file to a space |
+| `memory-graph` / `fetch-graph-data` | Explore the memory graph |
+| `select-space` / `set-active-tag` | Change the account's active space |
 
-All tools that accept a `container` argument support:
-- `"user"` (default) — personal memories for the current repository
-- `"project"` — project knowledge for the current repository
-- `"both"` — both scopes plus compatible legacy memories
-- any custom string — used as a raw container tag
+The first five rows are what the bundled rule, skills, and agent use. The rest
+come from the hosted server and appear in `tools/list` as well; the two
+`select-space` / `set-active-tag` tools change account-wide state, so prefer
+passing `containerTag` per call over switching the active space.
 
-`user` and `project` now write to the same repository container. The
-`sm_scope` metadata field keeps personal/session memories separate from
-explicit project knowledge when an agent requests one scope.
+Pass `containerTag` on every call, using the tag from the
+`<supermemory-context>` block the session-start hook injects. Without it the
+hosted server writes to the account's active space, and this project's hook
+recall will not find the memory. The bundled rule, skills, and context-gatherer
+agent all carry that instruction.
+
+Config lives in files rather than tools: see [Configuration](#configuration) or
+run the `/supermemory-config` command.
 
 ## Configuration
 
@@ -108,7 +118,7 @@ Per-workspace overrides. Add to `.gitignore` if it contains an API key. Project 
 | `signalKeywords` | Keywords that trigger signal-based capture | `remember`, `architecture`, `decision`, `bug`, `fix` |
 | `signalTurnsBefore` | Number of nearby turns retained around a signal | `3` |
 
-You can set these via the AI using `supermemory_set_config`, or create/edit the file manually.
+Create or edit the config file directly, or run the `/supermemory-config` command.
 
 ## Container tags
 
@@ -143,3 +153,26 @@ bun run build   # compiles all dist/ files
 4. Restart Cursor after changing MCP configuration.
 
 To test in a different project, add the `supermemory` entry from `.cursor/mcp.json` to that project's MCP config with an absolute path to this repo's `dist/cli.js` (keep the `mcp` argument — `${workspaceFolder}` would point at the wrong project there).
+
+## Cloud Agents
+
+Cursor Cloud Agents pass the plugin's `mcp.json` to the exec daemon without
+expanding `${CURSOR_PLUGIN_ROOT}`, and they have no browser for the login flow.
+
+The `mcp.json` entry handles the first half on its own: it launches `node -e`
+with no path of its own, then locates the install from `CURSOR_PLUGIN_ROOT`
+when that resolved, and otherwise from `~/.cursor/plugins`. Nothing to run.
+
+For the second half, set `SUPERMEMORY_API_KEY` in the agent environment. That
+is the only required Cloud Agent step.
+
+If an environment installs the plugin somewhere else entirely — no
+`~/.cursor/plugins` copy and no usable `CURSOR_PLUGIN_ROOT` — run this from the
+plugin directory to register an absolute entry:
+
+```bash
+node dist/cli.js mcp-install
+```
+
+It writes a `supermemory` entry with an absolute path into `~/.cursor/mcp.json`,
+which needs no variable expansion. Hooks keep working either way.

@@ -17,7 +17,7 @@
     "preToolUse": [
       {
         "command": "node \"${CURSOR_PLUGIN_ROOT}/dist/approve-memory.js\"",
-        "matcher": "MCP:.*supermemory.*|supermemory_.*",
+        "matcher": "MCP:.*supermemory.*|.*(search_memory|add_memory|listMemories|listDocuments|getDocument|listSpaces|whoAmI)$",
         "timeout": 5
       }
     ],

@@ -1,4 +1,5 @@
-import { startMcpServer } from "./mcp-server.ts";
+import { fileURLToPath } from "node:url";
+import { startMcpProxy } from "./mcp-proxy.ts";
 import {
   loadCredentials,
   startAuthFlow,
@@ -7,13 +8,21 @@ import {
 import { loadConfig, getApiKey } from "./config.ts";
 import { getProfile } from "./hook-api.ts";
 import { getResolvedTags } from "./tags.ts";
+import { writeGlobalMcpEntry } from "./mcp-install.ts";
 
 const command = process.argv[2];
 
 switch (command) {
   case "mcp":
-    await startMcpServer();
+    startMcpProxy();
     break;
+
+  case "mcp-install": {
+    const configPath = writeGlobalMcpEntry(fileURLToPath(import.meta.url));
+    console.log(`Registered the supermemory MCP server in ${configPath}.`);
+    console.log("Restart Cursor (or the cloud agent) to pick it up.");
+    break;
+  }
 
   case "login": {
     const existing = loadCredentials();
@@ -72,9 +81,10 @@ switch (command) {
     console.log(`cursor-supermemory — Persistent AI memory for Cursor
 
 Commands:
-  mcp      Start the MCP server (stdio)
-  login    Authenticate with Supermemory
-  logout   Remove stored credentials
-  status   Show authentication status`);
+  mcp          Proxy the hosted Supermemory MCP server over stdio
+  mcp-install  Register the MCP server in ~/.cursor/mcp.json with an absolute path
+  login        Authenticate with Supermemory
+  logout       Remove stored credentials
+  status       Show authentication status`);
     if (command) process.exit(1);
 }

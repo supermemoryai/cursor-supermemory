@@ -2,7 +2,10 @@
   "mcpServers": {
     "supermemory": {
       "command": "node",
-      "args": ["${CURSOR_PLUGIN_ROOT}/dist/cli.js", "mcp"]
+      "args": [
+        "-e",
+        "const f=require(\"fs\"),p=require(\"path\"),o=require(\"os\"),b=p.join(o.homedir(),\".cursor\",\"plugins\"),r=process.env.CURSOR_PLUGIN_ROOT,c=[];r&&!r.includes(\"${\")&&c.push(r);c.push(p.join(b,\"local\",\"cursor-supermemory\"));try{for(const m of f.readdirSync(p.join(b,\"cache\")))try{for(const v of f.readdirSync(p.join(b,\"cache\",m,\"cursor-supermemory\")))c.push(p.join(b,\"cache\",m,\"cursor-supermemory\",v))}catch{}}catch{}const t=c.find(x=>f.existsSync(p.join(x,\"dist\",\"cli.js\")));if(!t){console.error(\"supermemory: could not locate the plugin install\");process.exit(1)}require(\"child_process\").spawn(process.execPath,[p.join(t,\"dist\",\"cli.js\"),\"mcp\"],{stdio:\"inherit\"}).on(\"exit\",e=>process.exit(e??1))"
+      ]
     }
   }
 }

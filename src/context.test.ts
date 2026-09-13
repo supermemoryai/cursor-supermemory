@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { formatSessionContext } from "./context.ts";
+import { formatContainerDirective, formatSessionContext } from "./context.ts";
 
 test("formats and deduplicates Claude-style session context", () => {
   const context = formatSessionContext(
@@ -18,4 +18,17 @@ test("formats and deduplicates Claude-style session context", () => {
 
 test("does not claim memory is empty when no profile facts are ready", () => {
   expect(formatSessionContext([], 5, "repo_example__1234", "example")).toBe("");
+});
+
+test("tells the agent which container tag hosted MCP calls must use", () => {
+  const context = formatSessionContext(
+    [{ profile: { static: ["Uses Bun"], dynamic: [] } }],
+    5,
+    "repo_example__1234",
+    "example",
+  );
+  expect(context).toContain('containerTag: "repo_example__1234"');
+  expect(formatContainerDirective("repo_example__1234")).toContain(
+    "search_memory",
+  );
 });
