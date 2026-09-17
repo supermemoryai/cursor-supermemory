@@ -1,6 +1,6 @@
 ---
-name: memory-init
-description: Deep codebase exploration to initialize project memory. Use when starting work on a new project or when user asks to "index" or "learn" the codebase.
+name: supermemory-index
+description: Index codebase architecture and patterns into Supermemory
 ---
 
 Explore this codebase deeply, then save architecture, tech stack, conventions, and how to run as separate `add_memory` calls.
