@@ -58,6 +58,16 @@ agent all carry that instruction.
 Config lives in files rather than tools: see [Configuration](#configuration) or
 run the `/supermemory-config` command.
 
+## Commands
+
+| Command | Description |
+|---|---|
+| `/supermemory-index` | Index codebase architecture and patterns into Supermemory |
+| `/supermemory-config` | Configure Supermemory settings for this project |
+| `/supermemory-setup` | Connect Supermemory to Cursor |
+| `/supermemory-status` | Check authentication and live connectivity |
+| `/supermemory-logout` | Disconnect Supermemory from Cursor |
+
 ## Configuration
 
 ### Environment variables
