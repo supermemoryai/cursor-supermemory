@@ -14,8 +14,9 @@ Connect your Supermemory account:
 node "$(ls -d ~/.cursor/plugins/local/cursor-supermemory ~/.cursor/plugins/cache/*/cursor-supermemory/*/ 2>/dev/null | head -1)/dist/cli.js" login
 ```
 
-Cursor only sets `CURSOR_PLUGIN_ROOT` for plugin hooks, so the command above finds
-the install itself and works from any directory.
+Every host names the install path after itself — Cursor sets `CURSOR_PLUGIN_ROOT`,
+Claude Code and Grok set `CLAUDE_PLUGIN_ROOT`, Grok also sets `GROK_PLUGIN_ROOT` —
+so the command above finds the install itself and works from any directory.
 
 ## What it does
 
@@ -164,21 +165,28 @@ bun run build   # compiles all dist/ files
 
 To test in a different project, add the `supermemory` entry from `.cursor/mcp.json` to that project's MCP config with an absolute path to this repo's `dist/cli.js` (keep the `mcp` argument — `${workspaceFolder}` would point at the wrong project there).
 
-## Cloud Agents
+## Other hosts and Cloud Agents
 
-Cursor Cloud Agents pass the plugin's `mcp.json` to the exec daemon without
-expanding `${CURSOR_PLUGIN_ROOT}`, and they have no browser for the login flow.
+`${CURSOR_PLUGIN_ROOT}` only exists in Cursor. Grok expands `${GROK_PLUGIN_ROOT}`,
+`${CLAUDE_PLUGIN_ROOT}` and their `_DATA` pairs and nothing else, so a Cursor-only
+token reaches `node` verbatim and resolves against the working directory. Cursor
+Cloud Agents hand `mcp.json` to the exec daemon without expanding anything at all.
 
-The `mcp.json` entry handles the first half on its own: it launches `node -e`
-with no path of its own, then locates the install from `CURSOR_PLUGIN_ROOT`
-when that resolved, and otherwise from `~/.cursor/plugins`. Nothing to run.
+Neither `mcp.json` nor `hooks/hooks.json` depends on one host's token any more.
+Both launch `node -e` with no path of their own and locate the install in order:
+the plugin root a host expanded into the argument, then `CURSOR_PLUGIN_ROOT`,
+`CLAUDE_PLUGIN_ROOT` or `GROK_PLUGIN_ROOT` from the environment (a value still
+reading `${...}` is ignored), then a copy under `~/.cursor/plugins`,
+`~/.grok/installed-plugins`, `~/.grok/plugins` or `~/.claude/plugins`. Grok also
+reads `.claude-plugin/plugin.json`, which it discovers where `.cursor-plugin/` means
+nothing to it. Hooks fail open when no root resolves; the MCP entry reports it.
 
-For the second half, set `SUPERMEMORY_API_KEY` in the agent environment. That
-is the only required Cloud Agent step.
+Cloud Agents have no browser for the login flow, so set `SUPERMEMORY_API_KEY` in the
+agent environment. That is the only required Cloud Agent step.
 
-If an environment installs the plugin somewhere else entirely — no
-`~/.cursor/plugins` copy and no usable `CURSOR_PLUGIN_ROOT` — run this from the
-plugin directory to register an absolute entry:
+If an environment installs the plugin somewhere else entirely — none of those
+directories and no usable plugin root — run this from the plugin directory to
+register an absolute entry:
 
 ```bash
 node dist/cli.js mcp-install

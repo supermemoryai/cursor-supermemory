@@ -2,7 +2,7 @@ import { loadConfig, getApiKey } from "../config.ts";
 import { getResolvedTags } from "../tags.ts";
 import { getProfiles } from "../hook-api.ts";
 import { formatContainerDirective, formatSessionContext } from "../context.ts";
-import { readStdinText } from "../runtime.ts";
+import { pluginRootFromEnv, readStdinText } from "../runtime.ts";
 
 interface SessionStartInput {
   workspace_roots: string[];
@@ -20,7 +20,7 @@ async function main() {
   const config = loadConfig(workspaceRoot);
   const apiKey = getApiKey(config);
   if (!apiKey) {
-    const pluginRoot = process.env.CURSOR_PLUGIN_ROOT;
+    const pluginRoot = pluginRootFromEnv();
     const loginCmd = pluginRoot
       ? `node "${pluginRoot}/dist/cli.js" login`
       : "node dist/cli.js login";

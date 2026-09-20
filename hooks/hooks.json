@@ -3,39 +3,39 @@
   "hooks": {
     "sessionStart": [
       {
-        "command": "node \"${CURSOR_PLUGIN_ROOT}/dist/session-start.js\"",
+        "command": "node -e 'const f=require(\"fs\"),p=require(\"path\"),o=require(\"os\"),e=process.env,h=o.homedir(),lit=v=>!!v&&!v.includes(\"${\"),ok=x=>f.existsSync(p.join(x,\"dist\",\"cli.js\")),ls=d=>{try{return f.readdirSync(d).map(x=>p.join(d,x))}catch{return[]}};let t=[process.argv[1],e.CURSOR_PLUGIN_ROOT,e.CLAUDE_PLUGIN_ROOT,e.GROK_PLUGIN_ROOT].filter(lit).find(ok);if(!t){let g=[\".cursor/plugins/local\",\".cursor/plugins/cache\",\".grok/installed-plugins\",\".grok/plugins\",\".claude/plugins\"].flatMap(x=>ls(p.join(h,x)));for(let i=0;i<3&&!t;i++){t=g.find(ok);g=g.flatMap(ls)}}if(!t)process.exit(0);require(\"child_process\").spawn(process.execPath,[p.join(t,\"dist\",process.argv[2]+\".js\")],{stdio:\"inherit\"}).on(\"exit\",c=>process.exit(c??0))' \"${CLAUDE_PLUGIN_ROOT}\" session-start",
         "timeout": 20
       }
     ],
     "beforeSubmitPrompt": [
       {
-        "command": "node \"${CURSOR_PLUGIN_ROOT}/dist/prompt-recall.js\"",
+        "command": "node -e 'const f=require(\"fs\"),p=require(\"path\"),o=require(\"os\"),e=process.env,h=o.homedir(),lit=v=>!!v&&!v.includes(\"${\"),ok=x=>f.existsSync(p.join(x,\"dist\",\"cli.js\")),ls=d=>{try{return f.readdirSync(d).map(x=>p.join(d,x))}catch{return[]}};let t=[process.argv[1],e.CURSOR_PLUGIN_ROOT,e.CLAUDE_PLUGIN_ROOT,e.GROK_PLUGIN_ROOT].filter(lit).find(ok);if(!t){let g=[\".cursor/plugins/local\",\".cursor/plugins/cache\",\".grok/installed-plugins\",\".grok/plugins\",\".claude/plugins\"].flatMap(x=>ls(p.join(h,x)));for(let i=0;i<3&&!t;i++){t=g.find(ok);g=g.flatMap(ls)}}if(!t)process.exit(0);require(\"child_process\").spawn(process.execPath,[p.join(t,\"dist\",process.argv[2]+\".js\")],{stdio:\"inherit\"}).on(\"exit\",c=>process.exit(c??0))' \"${CLAUDE_PLUGIN_ROOT}\" prompt-recall",
         "matcher": "UserPromptSubmit",
         "timeout": 20
       }
     ],
     "preToolUse": [
       {
-        "command": "node \"${CURSOR_PLUGIN_ROOT}/dist/approve-memory.js\"",
+        "command": "node -e 'const f=require(\"fs\"),p=require(\"path\"),o=require(\"os\"),e=process.env,h=o.homedir(),lit=v=>!!v&&!v.includes(\"${\"),ok=x=>f.existsSync(p.join(x,\"dist\",\"cli.js\")),ls=d=>{try{return f.readdirSync(d).map(x=>p.join(d,x))}catch{return[]}};let t=[process.argv[1],e.CURSOR_PLUGIN_ROOT,e.CLAUDE_PLUGIN_ROOT,e.GROK_PLUGIN_ROOT].filter(lit).find(ok);if(!t){let g=[\".cursor/plugins/local\",\".cursor/plugins/cache\",\".grok/installed-plugins\",\".grok/plugins\",\".claude/plugins\"].flatMap(x=>ls(p.join(h,x)));for(let i=0;i<3&&!t;i++){t=g.find(ok);g=g.flatMap(ls)}}if(!t)process.exit(0);require(\"child_process\").spawn(process.execPath,[p.join(t,\"dist\",process.argv[2]+\".js\")],{stdio:\"inherit\"}).on(\"exit\",c=>process.exit(c??0))' \"${CLAUDE_PLUGIN_ROOT}\" approve-memory",
         "matcher": "MCP:.*supermemory.*|.*(search_memory|add_memory|listMemories|listDocuments|getDocument|listSpaces|whoAmI)$",
         "timeout": 5
       }
     ],
     "postToolUse": [
       {
-        "command": "node \"${CURSOR_PLUGIN_ROOT}/dist/inject-recall.js\"",
+        "command": "node -e 'const f=require(\"fs\"),p=require(\"path\"),o=require(\"os\"),e=process.env,h=o.homedir(),lit=v=>!!v&&!v.includes(\"${\"),ok=x=>f.existsSync(p.join(x,\"dist\",\"cli.js\")),ls=d=>{try{return f.readdirSync(d).map(x=>p.join(d,x))}catch{return[]}};let t=[process.argv[1],e.CURSOR_PLUGIN_ROOT,e.CLAUDE_PLUGIN_ROOT,e.GROK_PLUGIN_ROOT].filter(lit).find(ok);if(!t){let g=[\".cursor/plugins/local\",\".cursor/plugins/cache\",\".grok/installed-plugins\",\".grok/plugins\",\".claude/plugins\"].flatMap(x=>ls(p.join(h,x)));for(let i=0;i<3&&!t;i++){t=g.find(ok);g=g.flatMap(ls)}}if(!t)process.exit(0);require(\"child_process\").spawn(process.execPath,[p.join(t,\"dist\",process.argv[2]+\".js\")],{stdio:\"inherit\"}).on(\"exit\",c=>process.exit(c??0))' \"${CLAUDE_PLUGIN_ROOT}\" inject-recall",
         "timeout": 5
       }
     ],
     "stop": [
       {
-        "command": "node \"${CURSOR_PLUGIN_ROOT}/dist/capture.js\"",
+        "command": "node -e 'const f=require(\"fs\"),p=require(\"path\"),o=require(\"os\"),e=process.env,h=o.homedir(),lit=v=>!!v&&!v.includes(\"${\"),ok=x=>f.existsSync(p.join(x,\"dist\",\"cli.js\")),ls=d=>{try{return f.readdirSync(d).map(x=>p.join(d,x))}catch{return[]}};let t=[process.argv[1],e.CURSOR_PLUGIN_ROOT,e.CLAUDE_PLUGIN_ROOT,e.GROK_PLUGIN_ROOT].filter(lit).find(ok);if(!t){let g=[\".cursor/plugins/local\",\".cursor/plugins/cache\",\".grok/installed-plugins\",\".grok/plugins\",\".claude/plugins\"].flatMap(x=>ls(p.join(h,x)));for(let i=0;i<3&&!t;i++){t=g.find(ok);g=g.flatMap(ls)}}if(!t)process.exit(0);require(\"child_process\").spawn(process.execPath,[p.join(t,\"dist\",process.argv[2]+\".js\")],{stdio:\"inherit\"}).on(\"exit\",c=>process.exit(c??0))' \"${CLAUDE_PLUGIN_ROOT}\" capture",
         "timeout": 20
       }
     ],
     "sessionEnd": [
       {
-        "command": "node \"${CURSOR_PLUGIN_ROOT}/dist/capture.js\"",
+        "command": "node -e 'const f=require(\"fs\"),p=require(\"path\"),o=require(\"os\"),e=process.env,h=o.homedir(),lit=v=>!!v&&!v.includes(\"${\"),ok=x=>f.existsSync(p.join(x,\"dist\",\"cli.js\")),ls=d=>{try{return f.readdirSync(d).map(x=>p.join(d,x))}catch{return[]}};let t=[process.argv[1],e.CURSOR_PLUGIN_ROOT,e.CLAUDE_PLUGIN_ROOT,e.GROK_PLUGIN_ROOT].filter(lit).find(ok);if(!t){let g=[\".cursor/plugins/local\",\".cursor/plugins/cache\",\".grok/installed-plugins\",\".grok/plugins\",\".claude/plugins\"].flatMap(x=>ls(p.join(h,x)));for(let i=0;i<3&&!t;i++){t=g.find(ok);g=g.flatMap(ls)}}if(!t)process.exit(0);require(\"child_process\").spawn(process.execPath,[p.join(t,\"dist\",process.argv[2]+\".js\")],{stdio:\"inherit\"}).on(\"exit\",c=>process.exit(c??0))' \"${CLAUDE_PLUGIN_ROOT}\" capture",
         "timeout": 30
       }
     ]
