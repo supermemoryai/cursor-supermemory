@@ -18,6 +18,15 @@ export function readTextFile(filePath: string): Promise<string> {
   return readFile(filePath, "utf8");
 }
 
+// Each host names the plugin's install path after itself: Cursor sets CURSOR_PLUGIN_ROOT,
+// Claude Code and Grok set CLAUDE_PLUGIN_ROOT, and Grok also sets GROK_PLUGIN_ROOT. A value
+// that still reads "${...}" means the host passed the token through without expanding it.
+export function pluginRootFromEnv(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return [env.CURSOR_PLUGIN_ROOT, env.CLAUDE_PLUGIN_ROOT, env.GROK_PLUGIN_ROOT].find(
+    (value): value is string => !!value && !value.includes("${"),
+  );
+}
+
 // Node realpaths the ESM entry but not argv[1]; compare resolved paths so a symlinked plugin dir still matches.
 export function isMainModule(metaUrl: string): boolean {
   const entry = process.argv[1];

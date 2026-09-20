@@ -529,6 +529,9 @@ async function readStdinText() {
   }
   return Buffer.concat(chunks).toString("utf8");
 }
+function pluginRootFromEnv(env = process.env) {
+  return [env.CURSOR_PLUGIN_ROOT, env.CLAUDE_PLUGIN_ROOT, env.GROK_PLUGIN_ROOT].find((value) => !!value && !value.includes("${"));
+}
 
 // src/hooks/session-start.ts
 var ok = () => process.stdout.write(JSON.stringify({}));
@@ -539,7 +542,7 @@ async function main() {
   const config = loadConfig(workspaceRoot);
   const apiKey = getApiKey(config);
   if (!apiKey) {
-    const pluginRoot = process.env.CURSOR_PLUGIN_ROOT;
+    const pluginRoot = pluginRootFromEnv();
     const loginCmd = pluginRoot ? `node "${pluginRoot}/dist/cli.js" login` : "node dist/cli.js login";
     process.stdout.write(JSON.stringify({
       additional_context: `<supermemory-status>Supermemory is not connected. Ask the user to run \`${loginCmd}\` before relying on persistent memory.</supermemory-status>`
