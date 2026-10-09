@@ -7,3 +7,5 @@ description: Search persistent memory for relevant information from past coding 
 2. If results found, surface relevant memories in your response with context
 3. If no results found, note that no prior memory exists for this topic
 4. For a broad question, run a few narrower searches instead of one wide one, and use `listMemories` when recent memories matter more than semantic relevance
+
+For local MCP mode, use `supermemory_search` with `workspaceRoot`, `query` and `container: "user"`, `"project"` or `"both"`. The local `supermemory_list` alias lists documents, not formed memories; use `supermemory_profile` for personal facts. Preserve the distinction when interpreting results.

@@ -11,8 +11,16 @@ export function getProjectConfigPath(cwd: string): string {
 
 export function writeConfig(updates: Partial<Omit<Config, "apiKey">>, scope: "project" | "global", cwd = process.cwd()): void {
   const filePath = scope === "project" ? getProjectConfigPath(cwd) : GLOBAL_CONFIG_PATH;
+  let existing: Record<string, unknown> = {};
+  if (fs.existsSync(filePath)) {
+    try {
+      existing = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      if (!existing || typeof existing !== "object" || Array.isArray(existing)) throw new Error();
+    } catch {
+      throw new Error("Existing Supermemory config is invalid; repair it before updating.");
+    }
+  }
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const existing = readJson(filePath) ?? {};
   fs.writeFileSync(filePath, JSON.stringify({ ...existing, ...updates }, null, 2));
 }
 
@@ -20,6 +28,7 @@ export interface Config {
   apiKey: string | null;
   baseUrl: string | null;
   apiVersion?: "v5" | "legacy";
+  mcpMode?: "hosted" | "local";
   similarityThreshold: number;
   maxMemories: number;
   maxProjectMemories: number;
@@ -83,6 +92,7 @@ export function loadConfig(cwd?: string): Config {
       merged.baseUrl ??
       null,
     apiVersion: process.env.SUPERMEMORY_API_VERSION ?? merged.apiVersion,
+    mcpMode: process.env.SUPERMEMORY_MCP_MODE ?? merged.mcpMode,
     similarityThreshold: merged.similarityThreshold,
     maxMemories: merged.maxMemories,
     maxProjectMemories: merged.maxProjectMemories,

@@ -10,8 +10,19 @@ const command = process.argv[2];
 
 switch (command) {
   case "mcp":
-    startMcpProxy();
+  case "mcp-local": {
+    const mode = loadConfig().mcpMode;
+    if (mode !== undefined && mode !== "hosted" && mode !== "local") {
+      throw new Error('Supermemory mcpMode must be "hosted" or "local"');
+    }
+    if (command === "mcp-local" || mode === "local") {
+      const { startMcpServer } = await import("./mcp-server.js");
+      await startMcpServer();
+    } else {
+      startMcpProxy();
+    }
     break;
+  }
 
   case "mcp-install": {
     const configPath = writeGlobalMcpEntry(fileURLToPath(import.meta.url));
@@ -85,7 +96,8 @@ switch (command) {
     console.log(`cursor-supermemory — Persistent AI memory for Cursor
 
 Commands:
-  mcp          Proxy the hosted Supermemory MCP server over stdio
+  mcp          Run the configured MCP mode (default: hosted proxy)
+  mcp-local    Run the eight legacy local MCP tools with SDK-backed REST
   mcp-install  Register the MCP server in ~/.cursor/mcp.json with an absolute path
   login        Authenticate with Supermemory
   logout       Remove stored credentials
