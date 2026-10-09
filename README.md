@@ -4,7 +4,7 @@ Persistent AI memory for Cursor — powered by [Supermemory](https://supermemory
 
 ## Installation
 
-> Requires [Node.js](https://nodejs.org) on your PATH. Hooks and the MCP proxy run the plugin's bundled `dist/` with Node. Bun is only needed to *build* the plugin.
+> Requires [Node.js 18 or newer](https://nodejs.org) on your PATH. Hooks and the MCP proxy run the plugin's bundled `dist/` with Node, including the official Supermemory SDK. No runtime dependency installation is needed. Bun is only needed to *build* the plugin.
 
 Open **Customize** in Cursor, find **Supermemory**, select **Install**, and choose a project or user scope. Restart Cursor or run **Developer: Reload Window** after installation.
 
@@ -17,6 +17,12 @@ node "$(ls -d ~/.cursor/plugins/local/cursor-supermemory ~/.cursor/plugins/cache
 Every host names the install path after itself — Cursor sets `CURSOR_PLUGIN_ROOT`,
 Claude Code and Grok set `CLAUDE_PLUGIN_ROOT`, Grok also sets `GROK_PLUGIN_ROOT` —
 so the command above finds the install itself and works from any directory.
+
+### Upgrade channels
+
+This repository's **1.2.3 plugin-panel/Git distribution** uses the hosted MCP proxy and SDK-backed v5 REST hooks. Existing plugin-panel installations can update in Cursor and reload the window; an isolated Git/local installation can replace its plugin directory with this version. Keep your existing global/project config, credentials and hook-state files. The update does not rewrite them or upload historical transcripts. Existing container-tag strings are used unchanged as v5 namespaces, with canonical and legacy reads retained.
+
+The published npm **1.0.0** package is a different, older product with a local MCP server, different tools and installation wiring. This change does **not** publish 1.2.3 over that package or promise an in-place npm upgrade. npm users should retain their current install until a dedicated upgrade is available, or explicitly install the plugin-panel version alongside it, disable the old npm hook/MCP registration to avoid duplicate capture, and retain the old package/config as a rollback. Existing namespace overrides should be copied with their exact values only after reviewing the different config paths below; no automated conversion of the npm product is included.
 
 ## What it does
 
@@ -77,6 +83,9 @@ run the `/supermemory-config` command.
 |---|---|
 | `SUPERMEMORY_API_KEY` | API key (overrides all other sources) |
 | `SUPERMEMORY_API_URL` | Override the Supermemory API base URL |
+| `SUPERMEMORY_BASE_URL` | API base URL fallback when `SUPERMEMORY_API_URL` is unset |
+| `SUPERMEMORY_API_VERSION` | Explicit `v5` or `legacy` REST contract; overrides config `apiVersion` |
+| `SUPERMEMORY_MCP_URL` | Independent hosted MCP proxy endpoint; REST version selection does not change it |
 | `SUPERMEMORY_REPO_TAG` | Override the unified repository container tag |
 | `SUPERMEMORY_USER_TAG` | Legacy Cursor personal container to continue reading |
 | `SUPERMEMORY_PROJECT_TAG` | Legacy Cursor project container to continue reading |
@@ -118,6 +127,7 @@ Per-workspace overrides. Add to `.gitignore` if it contains an API key. Project 
 |---|---|---|
 | `apiKey` | Project-specific API key | — |
 | `baseUrl` | Override the Supermemory API base URL | Supermemory API |
+| `apiVersion` | `v5` or `legacy`; choose explicitly for an upgraded custom server | v5 for the hosted API root, legacy for custom endpoints |
 | `repoContainerTag` | Override the unified repository container | derived from normalized Git remote or project path |
 | `userContainerTag` | Legacy Cursor personal container to continue reading | — |
 | `projectContainerTag` | Legacy Cursor project container to continue reading | — |
@@ -130,6 +140,14 @@ Per-workspace overrides. Add to `.gitignore` if it contains an API key. Project 
 | `signalTurnsBefore` | Number of nearby turns retained around a signal | `3` |
 
 Create or edit the config file directly, or run the `/supermemory-config` command.
+
+### REST compatibility
+
+The hosted API root (`https://api.supermemory.ai`, including equivalent case/default-port/trailing-slash spellings) defaults to v5. Custom URLs keep the v3/v4 REST contract by default, including their path prefix and bearer key, so older self-hosted servers below 0.0.9 remain usable. After upgrading your custom server, opt into v5 with `"apiVersion": "v5"` or `SUPERMEMORY_API_VERSION=v5`. An explicit `legacy` also supports hosted rollback if that server still serves v3/v4. Invalid versions fail the memory operation; there is no failed-write version probing or fallback to the hosted API.
+
+Recall explicitly uses memories search, threshold `0.55`, ten candidates per namespace, no reranking or query rewriting. The existing local configured threshold floor, five-result cap, excerpts and session dedup remain. Session context uses query-free profiles and renders both old string facts and v5 object facts. Reads and capture retain the three-second request budget and zero automatic transport retries. Capture keeps its generation IDs and POST append/diff semantics, advancing its cursor only on valid document acceptance; acceptance is not completed processing or exactly-once billing. Dynamic processing is retained and can delay newly recallable facts by minutes; no billable instant processing is enabled.
+
+These are client contract guarantees, not a live-backend historical-data/ranking parity claim. No namespace move, merge, deletion or backfill is performed. Hosted MCP tool schemas and approvals remain unchanged because MCP is a separate protocol.
 
 ## Container tags
 
@@ -152,9 +170,13 @@ agents. New writes only use the unified repository tag. Set
 ## Development
 
 ```bash
-bun install
+bun install --frozen-lockfile
 bun run build   # compiles all dist/ files
+bun run typecheck && bun test
+bun run check:dist   # after committing the rebuilt dist/, rejects bundle drift
 ```
+
+Build with Bun 1.3.14 and the committed lockfile. The six standalone entrypoints stay in `dist/`; the CLI, profile, recall and capture entrypoints embed the official `supermemory@5.0.1` SDK where used, while the injection and approval entrypoints need no SDK. Upstream Apache-2.0 attribution is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and its full license ships under `licenses/`.
 
 ### Testing from this repo
 

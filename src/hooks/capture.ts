@@ -111,9 +111,7 @@ export function formatCapture(entries: CapturedEntry[]): string {
   if (entries.length === 0) return "";
   const parts = [`<|turn_start|>${new Date().toISOString()}`];
   for (const entry of entries) {
-    parts.push(
-      `<|start|>${entry.role}<|message|>${entry.text}<|end|>`,
-    );
+    parts.push(`<|start|>${entry.role}<|message|>${entry.text}<|end|>`);
   }
   parts.push("<|turn_end|>");
   return parts.join("\n\n");
@@ -141,7 +139,9 @@ async function capture(input: CursorHookInput): Promise<void> {
     const state = readHookState(id);
     const entries = parseTranscript(await readTextFile(transcriptPath));
     const capturedEntries =
-      state.transcriptPath === transcriptPath ? state.capturedEntries ?? 0 : 0;
+      state.transcriptPath === transcriptPath
+        ? (state.capturedEntries ?? 0)
+        : 0;
     const start = capturedEntries <= entries.length ? capturedEntries : 0;
     const selected = selectCaptureEntries(
       entries,
@@ -177,6 +177,7 @@ async function capture(input: CursorHookInput): Promise<void> {
           .digest("hex")}`,
         entityContext: AGENT_ENTITY_CONTEXT,
       },
+      config.apiVersion,
     );
     writeHookState(id, {
       capturedEntries: entries.length,

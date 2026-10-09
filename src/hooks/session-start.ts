@@ -1,6 +1,6 @@
 import { loadConfig, getApiKey } from "../config.ts";
 import { getResolvedTags } from "../tags.ts";
-import { getProfiles } from "../hook-api.ts";
+import { getProfiles, resolveApiVersion } from "../hook-api.ts";
 import { formatContainerDirective, formatSessionContext } from "../context.ts";
 import { pluginRootFromEnv, readStdinText } from "../runtime.ts";
 
@@ -26,8 +26,7 @@ async function main() {
       : "node dist/cli.js login";
     process.stdout.write(
       JSON.stringify({
-        additional_context:
-          `<supermemory-status>Supermemory is not connected. Ask the user to run \`${loginCmd}\` before relying on persistent memory.</supermemory-status>`,
+        additional_context: `<supermemory-status>Supermemory is not connected. Ask the user to run \`${loginCmd}\` before relying on persistent memory.</supermemory-status>`,
       }),
     );
     return;
@@ -46,7 +45,11 @@ async function main() {
           config.baseUrl,
           apiKey,
           tags.allReads,
-          tags.projectName,
+          resolveApiVersion(config.baseUrl, config.apiVersion) === "legacy"
+            ? tags.projectName
+            : undefined,
+          undefined,
+          config.apiVersion,
         )
       : [];
   } catch {

@@ -19,6 +19,7 @@ export function writeConfig(updates: Partial<Omit<Config, "apiKey">>, scope: "pr
 export interface Config {
   apiKey: string | null;
   baseUrl: string | null;
+  apiVersion?: "v5" | "legacy";
   similarityThreshold: number;
   maxMemories: number;
   maxProjectMemories: number;
@@ -81,6 +82,7 @@ export function loadConfig(cwd?: string): Config {
       process.env.SUPERMEMORY_BASE_URL ??
       merged.baseUrl ??
       null,
+    apiVersion: process.env.SUPERMEMORY_API_VERSION ?? merged.apiVersion,
     similarityThreshold: merged.similarityThreshold,
     maxMemories: merged.maxMemories,
     maxProjectMemories: merged.maxProjectMemories,

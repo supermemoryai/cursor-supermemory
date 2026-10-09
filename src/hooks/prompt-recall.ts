@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { loadConfig, getApiKey } from "../config.ts";
-import { getProfiles } from "../hook-api.ts";
+import { getSearches } from "../hook-api.ts";
 import { readHookState, writeHookState } from "../hook-state.ts";
 import { getResolvedTags } from "../tags.ts";
 import {
@@ -75,9 +75,10 @@ export function selectRecallResults(
     .slice(0, MAX_RESULTS);
   return {
     fresh,
-    hashes: [...seenHashes, ...fresh.map((result) => hashText(resultText(result)))].slice(
-      -MAX_SEEN_HASHES,
-    ),
+    hashes: [
+      ...seenHashes,
+      ...fresh.map((result) => hashText(resultText(result))),
+    ].slice(-MAX_SEEN_HASHES),
   };
 }
 
@@ -118,11 +119,12 @@ export async function runPromptRecall(input: CursorHookInput): Promise<void> {
     const id = conversationId(input);
     const state = readHookState(id);
     const tags = getResolvedTags(root, config);
-    const profiles = await getProfiles(
+    const profiles = await getSearches(
       config.baseUrl,
       apiKey,
       tags.allReads,
       prompt!.slice(0, MAX_QUERY_LENGTH),
+      config.apiVersion,
     );
     const { fresh, hashes } = selectRecallResults(
       profiles,

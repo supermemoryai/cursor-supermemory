@@ -12,14 +12,18 @@ export function formatSessionContext(
   const statics = [
     ...new Set(
       profiles.flatMap((result) =>
-        Array.isArray(result?.profile?.static) ? result.profile.static : [],
+        Array.isArray(result?.profile?.static)
+          ? result.profile.static.flatMap(factText)
+          : [],
       ),
     ),
   ].slice(0, maxItems);
   const dynamics = [
     ...new Set(
       profiles.flatMap((result) =>
-        Array.isArray(result?.profile?.dynamic) ? result.profile.dynamic : [],
+        Array.isArray(result?.profile?.dynamic)
+          ? result.profile.dynamic.flatMap(factText)
+          : [],
       ),
     ),
   ].slice(0, maxItems);
@@ -42,4 +46,10 @@ ${formatContainerDirective(containerTag)}
 
 ${sections.join("\n\n")}
 </supermemory-context>`;
+}
+
+function factText(fact: unknown): string[] {
+  const text =
+    typeof fact === "string" ? fact : (fact as { memory?: unknown })?.memory;
+  return typeof text === "string" && text.trim() ? [text] : [];
 }
