@@ -1,6 +1,7 @@
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import { loadCredentials } from "./auth.ts";
 
 export const GLOBAL_CONFIG_PATH = path.join(os.homedir(), ".config", "cursor", "supermemory.json");
@@ -20,8 +21,23 @@ export function writeConfig(updates: Partial<Omit<Config, "apiKey">>, scope: "pr
       throw new Error("Existing Supermemory config is invalid; repair it before updating.");
     }
   }
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify({ ...existing, ...updates }, null, 2));
+  const targetPath = fs.existsSync(filePath) ? fs.realpathSync(filePath) : filePath;
+  const mode = fs.existsSync(targetPath) ? fs.statSync(targetPath).mode & 0o777 : 0o600;
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  const temporaryPath = path.join(path.dirname(targetPath), `.${path.basename(targetPath)}.${randomUUID()}.tmp`);
+  try {
+    const descriptor = fs.openSync(temporaryPath, "wx", 0o600);
+    try {
+      fs.writeFileSync(descriptor, JSON.stringify({ ...existing, ...updates }, null, 2));
+      fs.fchmodSync(descriptor, mode);
+      fs.fsyncSync(descriptor);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    fs.renameSync(temporaryPath, targetPath);
+  } finally {
+    fs.rmSync(temporaryPath, { force: true });
+  }
 }
 
 export interface Config {

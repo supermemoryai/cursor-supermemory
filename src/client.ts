@@ -5,6 +5,7 @@ import {
 } from "supermemory";
 import LegacySupermemory from "supermemory-legacy";
 import compatibleFetch, {
+  AbortError,
   type RequestInfo,
   type RequestInit,
 } from "node-fetch";
@@ -28,6 +29,9 @@ const httpsAgent = new HttpsAgent({ keepAlive: true });
 export type MemoryScope = "personal" | "project";
 
 function sdkFetch(input: RequestInfo, init?: RequestInit) {
+  if (init?.signal?.aborted) {
+    return Promise.reject(new AbortError("The operation was aborted."));
+  }
   return compatibleFetch(input, {
     ...init,
     agent: (url) => (url.protocol === "http:" ? httpAgent : httpsAgent),

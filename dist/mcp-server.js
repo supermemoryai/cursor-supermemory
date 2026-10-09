@@ -33555,6 +33555,7 @@ import { isAbsolute } from "node:path";
 import path2 from "node:path";
 import os2 from "node:os";
 import fs2 from "node:fs";
+import { randomUUID } from "node:crypto";
 
 // src/auth.ts
 import path from "node:path";
@@ -33593,8 +33594,23 @@ function writeConfig(updates, scope, cwd = process.cwd()) {
       throw new Error("Existing Supermemory config is invalid; repair it before updating.");
     }
   }
-  fs2.mkdirSync(path2.dirname(filePath), { recursive: true });
-  fs2.writeFileSync(filePath, JSON.stringify({ ...existing, ...updates }, null, 2));
+  const targetPath = fs2.existsSync(filePath) ? fs2.realpathSync(filePath) : filePath;
+  const mode = fs2.existsSync(targetPath) ? fs2.statSync(targetPath).mode & 511 : 384;
+  fs2.mkdirSync(path2.dirname(targetPath), { recursive: true });
+  const temporaryPath = path2.join(path2.dirname(targetPath), `.${path2.basename(targetPath)}.${randomUUID()}.tmp`);
+  try {
+    const descriptor = fs2.openSync(temporaryPath, "wx", 384);
+    try {
+      fs2.writeFileSync(descriptor, JSON.stringify({ ...existing, ...updates }, null, 2));
+      fs2.fchmodSync(descriptor, mode);
+      fs2.fsyncSync(descriptor);
+    } finally {
+      fs2.closeSync(descriptor);
+    }
+    fs2.renameSync(temporaryPath, targetPath);
+  } finally {
+    fs2.rmSync(temporaryPath, { force: true });
+  }
 }
 var DEFAULTS = {
   baseUrl: null,
@@ -39917,6 +39933,9 @@ var DEFAULT_BASE_URL2 = "https://api.supermemory.ai";
 var httpAgent = new HttpAgent({ keepAlive: true });
 var httpsAgent = new HttpsAgent({ keepAlive: true });
 function sdkFetch(input, init) {
+  if (init?.signal?.aborted) {
+    return Promise.reject(new AbortError("The operation was aborted."));
+  }
   return fetch2(input, {
     ...init,
     agent: (url2) => url2.protocol === "http:" ? httpAgent : httpsAgent
