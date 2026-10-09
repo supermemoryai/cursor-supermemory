@@ -174,6 +174,7 @@ function loadConfig(cwd) {
     apiKey: process.env.SUPERMEMORY_API_KEY ?? merged.apiKey ?? null,
     baseUrl: process.env.SUPERMEMORY_API_URL ?? process.env.SUPERMEMORY_BASE_URL ?? merged.baseUrl ?? null,
     apiVersion: process.env.SUPERMEMORY_API_VERSION ?? merged.apiVersion,
+    mcpMode: process.env.SUPERMEMORY_MCP_MODE ?? merged.mcpMode,
     similarityThreshold: merged.similarityThreshold,
     maxMemories: merged.maxMemories,
     maxProjectMemories: merged.maxProjectMemories,
@@ -191,99 +192,6 @@ function getApiKey(config) {
     return config.apiKey;
   const creds = loadCredentials();
   return creds?.apiKey ?? null;
-}
-
-// src/mcp-proxy.ts
-var MCP_URL = process.env.SUPERMEMORY_MCP_URL || "https://mcp.supermemory.ai/mcp";
-var REQUEST_TIMEOUT_MS = 30000;
-var sessionId = null;
-function send(message) {
-  process.stdout.write(`${JSON.stringify(message)}
-`);
-}
-function sendError(id, code, message) {
-  if (id === undefined || id === null)
-    return;
-  send({ jsonrpc: "2.0", id, error: { code, message } });
-}
-function emitSseData(body, write) {
-  for (const event of body.split(`
-
-`)) {
-    for (const line of event.split(`
-`)) {
-      if (!line.startsWith("data:"))
-        continue;
-      const data = line.slice(5).trim();
-      if (data)
-        write(`${data}
-`);
-    }
-  }
-}
-async function forward(message, apiKey) {
-  const headers = {
-    Authorization: `Bearer ${apiKey}`,
-    "Content-Type": "application/json",
-    Accept: "application/json, text/event-stream"
-  };
-  if (sessionId)
-    headers["Mcp-Session-Id"] = sessionId;
-  const response = await fetch(MCP_URL, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(message),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-  });
-  const nextSessionId = response.headers.get("mcp-session-id");
-  if (nextSessionId)
-    sessionId = nextSessionId;
-  if (response.status === 202)
-    return;
-  if (!response.ok) {
-    const body2 = await response.text().catch(() => "");
-    sendError(message.id, -32000, `Supermemory MCP ${response.status}: ${body2.slice(0, 200) || "request failed"}`);
-    return;
-  }
-  const body = await response.text();
-  if (!body.trim())
-    return;
-  if ((response.headers.get("content-type") || "").includes("text/event-stream")) {
-    emitSseData(body, (line) => process.stdout.write(line));
-  } else {
-    process.stdout.write(`${body.trim()}
-`);
-  }
-}
-function startMcpProxy() {
-  const apiKey = getApiKey(loadConfig());
-  let queue = Promise.resolve();
-  const lines = createInterface({ input: process.stdin });
-  lines.on("line", (line) => {
-    if (!line.trim())
-      return;
-    let message;
-    try {
-      message = JSON.parse(line);
-    } catch {
-      return;
-    }
-    queue = queue.then(async () => {
-      if (!apiKey) {
-        sendError(message.id, -32001, "Supermemory is not authenticated. Run `cursor-supermemory login`, or set SUPERMEMORY_API_KEY.");
-        return;
-      }
-      try {
-        await forward(message, apiKey);
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        sendError(message.id, -32000, `Supermemory MCP proxy error: ${detail}`);
-      }
-    });
-  });
-  lines.on("close", () => {
-    queue.finally(() => process.exit(0));
-  });
 }
 
 // src/hook-api.ts
@@ -3679,7 +3587,7 @@ class Supermemory extends SupermemoryClient {
 
 // src/hook-api.ts
 var DEFAULT_BASE_URL = "https://api.supermemory.ai";
-var REQUEST_TIMEOUT_MS2 = 3000;
+var REQUEST_TIMEOUT_MS = 3000;
 var INTEGRITY_VERSION = 1;
 var SEED = "7f2a9c4b8e1d6f3a5c0b9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a";
 function resolveApiVersion(baseUrl, apiVersion) {
@@ -3700,23 +3608,23 @@ function sdk(baseUrl, apiKey, tag) {
   return new Supermemory({
     apiKey,
     baseUrl: (baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, ""),
-    headers: headers(apiKey, tag),
-    timeoutInSeconds: REQUEST_TIMEOUT_MS2 / 1000,
+    headers: memoryHeaders(apiKey, tag),
+    timeoutInSeconds: REQUEST_TIMEOUT_MS / 1000,
     maxRetries: 0
   });
 }
-async function sdkRequest(request) {
+async function memoryRequest(request) {
   try {
     return await request;
   } catch (error) {
-    const status = error?.statusCode;
+    const status = error?.statusCode ?? error?.status;
     throw new Error(status ? `Supermemory request failed with HTTP ${status}` : "Supermemory request failed or timed out");
   }
 }
 function sha256(input) {
   return createHash("sha256").update(input).digest("hex");
 }
-function headers(apiKey, containerTag) {
+function memoryHeaders(apiKey, containerTag) {
   const contentHash = sha256(containerTag);
   const payload = [sha256(apiKey), contentHash, INTEGRITY_VERSION].join(":");
   const signature = createHmac("sha256", SEED).update(payload).digest("base64url");
@@ -3731,9 +3639,9 @@ function headers(apiKey, containerTag) {
 async function post(baseUrl, apiKey, path3, containerTag, body) {
   const response = await fetch(`${(baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, "")}${path3}`, {
     method: "POST",
-    headers: headers(apiKey, containerTag),
+    headers: memoryHeaders(apiKey, containerTag),
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS2)
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
   }).catch(() => {
     throw new Error("Supermemory request failed or timed out");
   });
@@ -3748,12 +3656,12 @@ async function getProfile(baseUrl, apiKey, containerTag, query, scope, apiVersio
   if (resolveApiVersion(baseUrl, apiVersion) === "v5") {
     const client = sdk(baseUrl, apiKey, containerTag);
     const options = {
-      abortSignal: AbortSignal.timeout(REQUEST_TIMEOUT_MS2),
+      abortSignal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       maxRetries: 0
     };
     const body = scope ? { filter: { field: "sm_scope", operator: "eq", value: scope } } : {};
     const [profile, searchResults] = await Promise.all([
-      sdkRequest(client.profile(containerTag, body, options)),
+      memoryRequest(client.profile(containerTag, body, options)),
       query ? searchMemories(baseUrl, apiKey, containerTag, query, scope, "v5", options.abortSignal) : undefined
     ]);
     return { ...profile, ...searchResults ? { searchResults } : {} };
@@ -3768,11 +3676,11 @@ async function getProfile(baseUrl, apiKey, containerTag, query, scope, apiVersio
     } : {}
   });
 }
-async function searchMemories(baseUrl, apiKey, containerTag, query, scope, apiVersion, abortSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS2)) {
+async function searchMemories(baseUrl, apiKey, containerTag, query, scope, apiVersion, abortSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS)) {
   if (resolveApiVersion(baseUrl, apiVersion) === "legacy") {
     return getProfile(baseUrl, apiKey, containerTag, query, scope, "legacy");
   }
-  return sdkRequest(sdk(baseUrl, apiKey, containerTag).search(containerTag, {
+  return memoryRequest(sdk(baseUrl, apiKey, containerTag).search(containerTag, {
     query,
     searchMode: "memories",
     threshold: 0.55,
@@ -3787,6 +3695,111 @@ async function searchMemories(baseUrl, apiKey, containerTag, query, scope, apiVe
       }
     } : {}
   }, { abortSignal, maxRetries: 0 }));
+}
+
+// src/mcp-proxy.ts
+var MCP_URL = process.env.SUPERMEMORY_MCP_URL || "https://mcp.supermemory.ai/mcp";
+var REQUEST_TIMEOUT_MS2 = 30000;
+var sessionId = null;
+function send(message) {
+  process.stdout.write(`${JSON.stringify(message)}
+`);
+}
+function sendError(id, code, message) {
+  if (id === undefined || id === null)
+    return;
+  send({ jsonrpc: "2.0", id, error: { code, message } });
+}
+function emitSseData(body, write) {
+  for (const event of body.split(`
+
+`)) {
+    for (const line of event.split(`
+`)) {
+      if (!line.startsWith("data:"))
+        continue;
+      const data = line.slice(5).trim();
+      if (data)
+        write(`${data}
+`);
+    }
+  }
+}
+async function forward(message, apiKey) {
+  const headers = {
+    Authorization: `Bearer ${apiKey}`,
+    "Content-Type": "application/json",
+    Accept: "application/json, text/event-stream"
+  };
+  if (sessionId)
+    headers["Mcp-Session-Id"] = sessionId;
+  const response = await fetch(MCP_URL, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(message),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS2)
+  });
+  const nextSessionId = response.headers.get("mcp-session-id");
+  if (nextSessionId)
+    sessionId = nextSessionId;
+  if (response.status === 202)
+    return;
+  if (!response.ok) {
+    sendError(message.id, -32000, `Supermemory MCP ${response.status}: request failed`);
+    return;
+  }
+  const body = await response.text();
+  if (!body.trim())
+    return;
+  if ((response.headers.get("content-type") || "").includes("text/event-stream")) {
+    emitSseData(body, (line) => process.stdout.write(line));
+  } else {
+    process.stdout.write(`${body.trim()}
+`);
+  }
+}
+function startMcpProxy() {
+  const config = loadConfig();
+  const mcpApiKey = process.env.SUPERMEMORY_MCP_API_KEY;
+  const apiKey = mcpApiKey ?? getApiKey(config);
+  let routingError;
+  try {
+    if (new URL(MCP_URL).hostname.toLowerCase() === "mcp.supermemory.ai" && resolveApiVersion(config.baseUrl) === "legacy" && !mcpApiKey) {
+      routingError = "Custom REST credentials cannot be used for hosted MCP. Select local MCP mode, configure your MCP endpoint, or set SUPERMEMORY_MCP_API_KEY explicitly.";
+    }
+  } catch {
+    routingError = "Supermemory MCP or REST endpoint configuration is invalid.";
+  }
+  let queue = Promise.resolve();
+  const lines = createInterface({ input: process.stdin });
+  lines.on("line", (line) => {
+    if (!line.trim())
+      return;
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch {
+      return;
+    }
+    queue = queue.then(async () => {
+      if (routingError) {
+        sendError(message.id, -32001, routingError);
+        return;
+      }
+      if (!apiKey) {
+        sendError(message.id, -32001, "Supermemory is not authenticated. Run `cursor-supermemory login`, or set SUPERMEMORY_API_KEY.");
+        return;
+      }
+      try {
+        await forward(message, apiKey);
+      } catch {
+        sendError(message.id, -32000, "Supermemory MCP proxy request failed or timed out.");
+      }
+    });
+  });
+  lines.on("close", () => {
+    queue.finally(() => process.exit(0));
+  });
 }
 
 // src/tags.ts
@@ -4163,8 +4176,19 @@ function writeGlobalMcpEntry(cliPath, configPath = GLOBAL_MCP_PATH) {
 var command = process.argv[2];
 switch (command) {
   case "mcp":
-    startMcpProxy();
+  case "mcp-local": {
+    const mode = loadConfig().mcpMode;
+    if (mode !== undefined && mode !== "hosted" && mode !== "local") {
+      throw new Error('Supermemory mcpMode must be "hosted" or "local"');
+    }
+    if (command === "mcp-local" || mode === "local") {
+      const { startMcpServer } = await import("./mcp-server.js");
+      await startMcpServer();
+    } else {
+      startMcpProxy();
+    }
     break;
+  }
   case "mcp-install": {
     const configPath = writeGlobalMcpEntry(fileURLToPath(import.meta.url));
     console.log(`Registered the supermemory MCP server in ${configPath}.`);
@@ -4218,7 +4242,8 @@ switch (command) {
     console.log(`cursor-supermemory — Persistent AI memory for Cursor
 
 Commands:
-  mcp          Proxy the hosted Supermemory MCP server over stdio
+  mcp          Run the configured MCP mode (default: hosted proxy)
+  mcp-local    Run the eight legacy local MCP tools with SDK-backed REST
   mcp-install  Register the MCP server in ~/.cursor/mcp.json with an absolute path
   login        Authenticate with Supermemory
   logout       Remove stored credentials

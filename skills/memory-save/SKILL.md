@@ -8,3 +8,5 @@ description: Save important information to persistent memory. Use when user expl
 3. Prefix project knowledge with the area it belongs to (architecture, conventions, error solutions) so later searches can distinguish it
 4. Use `add_memory` in `forget` mode when the information replaces something now outdated
 5. Confirm to user that the information has been saved
+
+For local MCP mode, use `supermemory_add` with `workspaceRoot`, `content` and `container: "user"` or `"project"`. Use `supermemory_forget` with the same workspace/container and an exact ID or exact content to forget; do not use a semantic replacement. Check the result's error flag before claiming success.

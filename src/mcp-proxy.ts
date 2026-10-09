@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline";
 import { getApiKey, loadConfig } from "./config.ts";
+import { resolveApiVersion } from "./hook-api.ts";
 
 const MCP_URL =
   process.env.SUPERMEMORY_MCP_URL || "https://mcp.supermemory.ai/mcp";
@@ -25,10 +26,7 @@ function sendError(
   send({ jsonrpc: "2.0", id, error: { code, message } });
 }
 
-export function emitSseData(
-  body: string,
-  write: (line: string) => void,
-): void {
+export function emitSseData(body: string, write: (line: string) => void): void {
   for (const event of body.split("\n\n")) {
     for (const line of event.split("\n")) {
       if (!line.startsWith("data:")) continue;
@@ -58,11 +56,10 @@ async function forward(message: JsonRpcMessage, apiKey: string): Promise<void> {
 
   if (response.status === 202) return;
   if (!response.ok) {
-    const body = await response.text().catch(() => "");
     sendError(
       message.id,
       -32000,
-      `Supermemory MCP ${response.status}: ${body.slice(0, 200) || "request failed"}`,
+      `Supermemory MCP ${response.status}: request failed`,
     );
     return;
   }
@@ -70,7 +67,9 @@ async function forward(message: JsonRpcMessage, apiKey: string): Promise<void> {
   const body = await response.text();
   if (!body.trim()) return;
 
-  if ((response.headers.get("content-type") || "").includes("text/event-stream")) {
+  if (
+    (response.headers.get("content-type") || "").includes("text/event-stream")
+  ) {
     emitSseData(body, (line) => process.stdout.write(line));
   } else {
     process.stdout.write(`${body.trim()}\n`);
@@ -78,7 +77,22 @@ async function forward(message: JsonRpcMessage, apiKey: string): Promise<void> {
 }
 
 export function startMcpProxy(): void {
-  const apiKey = getApiKey(loadConfig());
+  const config = loadConfig();
+  const mcpApiKey = process.env.SUPERMEMORY_MCP_API_KEY;
+  const apiKey = mcpApiKey ?? getApiKey(config);
+  let routingError: string | undefined;
+  try {
+    if (
+      new URL(MCP_URL).hostname.toLowerCase() === "mcp.supermemory.ai" &&
+      resolveApiVersion(config.baseUrl) === "legacy" &&
+      !mcpApiKey
+    ) {
+      routingError =
+        "Custom REST credentials cannot be used for hosted MCP. Select local MCP mode, configure your MCP endpoint, or set SUPERMEMORY_MCP_API_KEY explicitly.";
+    }
+  } catch {
+    routingError = "Supermemory MCP or REST endpoint configuration is invalid.";
+  }
   let queue = Promise.resolve();
   const lines = createInterface({ input: process.stdin });
 
@@ -93,6 +107,10 @@ export function startMcpProxy(): void {
     }
 
     queue = queue.then(async () => {
+      if (routingError) {
+        sendError(message.id, -32001, routingError);
+        return;
+      }
       if (!apiKey) {
         sendError(
           message.id,
@@ -104,9 +122,12 @@ export function startMcpProxy(): void {
 
       try {
         await forward(message, apiKey);
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        sendError(message.id, -32000, `Supermemory MCP proxy error: ${detail}`);
+      } catch {
+        sendError(
+          message.id,
+          -32000,
+          "Supermemory MCP proxy request failed or timed out.",
+        );
       }
     });
   });

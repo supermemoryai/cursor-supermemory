@@ -23,3 +23,5 @@ When to use:
 - User asks why something was done a certain way → search for context
 
 Every line marked ◪ was recalled from Supermemory. Preserve the mark when citing it and call the source “Supermemory,” never generic memory.
+
+In local MCP mode, use the discovered `supermemory_*` aliases instead: `supermemory_search` for recall, `supermemory_add` for saving, `supermemory_profile` for profiles, `supermemory_list` for documents and `supermemory_forget` for exact forgetting. Every local call requires `workspaceRoot` with the active workspace's absolute path. Use `container: "user"` for personal facts or `"project"` for project facts; both use the existing repository namespace with different scope metadata. `supermemory_get_config`, `supermemory_set_config` and `supermemory_containers` operate locally. Do not substitute hosted tool fields or semantic deletion for these aliases.

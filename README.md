@@ -6,7 +6,7 @@ Persistent AI memory for Cursor — powered by [Supermemory](https://supermemory
 
 > Requires [Node.js 18 or newer](https://nodejs.org) on your PATH. Hooks and the MCP proxy run the plugin's bundled `dist/` with Node, including the official Supermemory SDK. No runtime dependency installation is needed. Bun is only needed to *build* the plugin.
 
-Open **Customize** in Cursor, find **Supermemory**, select **Install**, and choose a project or user scope. Restart Cursor or run **Developer: Reload Window** after installation.
+Open **Customize** in Cursor, find **Supermemory**, select **Install**, and choose a project or user scope. Restart Cursor or run **Developer: Reload Window** after installation. The public catalog is manually reviewed and can lag this repository: the audited public listing pins SDK4/local-MCP version **1.1.0**, not this source artifact. A source merge is not a native catalog update.
 
 Connect your Supermemory account:
 
@@ -20,9 +20,11 @@ so the command above finds the install itself and works from any directory.
 
 ### Upgrade channels
 
-This repository's **1.2.3 plugin-panel/Git distribution** uses the hosted MCP proxy and SDK-backed v5 REST hooks. Existing plugin-panel installations can update in Cursor and reload the window; an isolated Git/local installation can replace its plugin directory with this version. Keep your existing global/project config, credentials and hook-state files. The update does not rewrite them or upload historical transcripts. Existing container-tag strings are used unchanged as v5 namespaces, with canonical and legacy reads retained.
+This repository's **1.2.4 source artifact** has SDK-backed v5 REST hooks and explicit hosted/local MCP modes. Existing 1.2.x hosted-proxy installations retain hosted mode by default. **Catalog 1.1.0 users MUST select local mode before updating** to preserve their eight local tool interfaces; there is no reliable installed-generation marker and no automatic mode conversion. See [Local MCP compatibility](#local-mcp-compatibility). Source availability does not establish a public catalog refresh or native upgrade.
 
-The published npm **1.0.0** package is a different, older product with a local MCP server, different tools and installation wiring. This change does **not** publish 1.2.3 over that package or promise an in-place npm upgrade. npm users should retain their current install until a dedicated upgrade is available, or explicitly install the plugin-panel version alongside it, disable the old npm hook/MCP registration to avoid duplicate capture, and retain the old package/config as a rollback. Existing namespace overrides should be copied with their exact values only after reviewing the different config paths below; no automated conversion of the npm product is included.
+Keep your existing global/project config, credentials and hook-state files. The update does not rewrite them or upload historical transcripts. Existing container-tag strings are used unchanged as v5 namespaces, with canonical and legacy reads retained. A native manager update must be checked separately; the verified transition is an isolated artifact replacement with recoverable original files.
+
+The published npm **1.0.0** package is a different, older product with a local MCP server, different tools and installation wiring. This change does **not** publish 1.2.4 over that package or promise an in-place npm upgrade. npm users should retain their current install until a dedicated upgrade is available. Existing namespace overrides should be copied with their exact values only after reviewing the different config paths below; no automated conversion of the npm product is included.
 
 ## What it does
 
@@ -65,6 +67,30 @@ agent all carry that instruction.
 Config lives in files rather than tools: see [Configuration](#configuration) or
 run the `/supermemory-config` command.
 
+### Local MCP compatibility
+
+Set `"mcpMode": "local"` in your existing global/project config, preserving every other key, or set `SUPERMEMORY_MCP_MODE=local` in the MCP launch environment. The existing `cli.js mcp` registration then starts the restored local server. `cli.js mcp-local` explicitly selects the same server without changing registrations or stored settings. A valid explicit command overrides a valid mode setting; invalid mode strings fail closed. Values are exactly lowercase `local` or `hosted`, and the environment overrides merged project/global config. No mode is inferred from namespace, credential or state files.
+
+The eight aliases are `supermemory_get_config`, `supermemory_set_config`, `supermemory_containers`, `supermemory_search`, `supermemory_add`, `supermemory_profile`, `supermemory_list` and `supermemory_forget`. Every call retains its required absolute `workspaceRoot`; keys, base URLs, config and namespace aliases are resolved for that workspace, not the server's startup cwd. `container: "user"` and `"project"` use the same canonical namespace with personal/project metadata; `"both"` is a read alias, and arbitrary custom containers retain their exact strings. The `supermemory_list` alias lists **documents**, as the old SDK implementation did; it never silently becomes a formed-memory list.
+
+Local core operations use SDK5 on the hosted API or explicitly upgraded custom servers, and pinned SDK4.11.1 on explicitly selected legacy/custom servers. Local search retains hybrid mode, its caller limit and the legacy 0.6 server threshold, separately from automatic hook recall's 0.55 memories-only search. Local tools retain the 60-second per-attempt timeout and a maximum of two SDK retries, not identical retry policies: SDK5 does not retry 409 responses or attempt timeouts as SDK4 does. A five-minute outer abort cancels active requests and response bodies, but an SDK retry sleep can delay returning the abort. The transport rejects already-aborted signals before constructing another request. Automatic hooks remain at three seconds/zero retries. A retry-capable explicit save is not proof of exactly-once billing.
+
+The SDKs use bundled node-fetch 3.3.2 with keep-alive agents as their supported custom fetch implementation in local mode. This keeps timeout/body cancellation working on the minimum Node 18.0 runtime; the hosted proxy and automatic-hook transports remain unchanged.
+
+Exact-ID forgetting uses SDK5 memory IDs in one namespace per request and verifies the returned count/matches/errors. Exact-content forgetting has no equivalent SDK5 operation, so that **explicit tool argument** uses the pinned SDK4 exact-content endpoint at the same configured base URL, even when core operations use v5. It never calls semantic deletion or retries a failed v5 operation on another version. Legacy-route availability is server-dependent; failure is reported rather than rerouted. Any incomplete/invalid namespace outcome sets the MCP error flag and reports confirmed outcomes plus failed namespaces; successful changes aren't rolled back automatically.
+
+Local mode does not connect to hosted MCP for initialization or tool discovery. The eight tools and their local config operations work without hosted MCP access. Selecting local mode changes the protocol surface deliberately; it is **not** a transparent default upgrade of catalog 1.1.0.
+
+#### Explicit catalog 1.1.0 transition
+
+The cold-artifact transition was verified with the exact catalog revision `83c5968`, not with a native Cursor manager. Use these steps only for a deliberate source/local trial; publishing or refreshing the public catalog is a separate authorized action.
+
+1. Stop active Cursor agents/hooks. Copy the complete old plugin artifact outside auto-discovered plugin roots, and privately back up `~/.config/cursor/supermemory.json`, each project's `.cursor/.supermemory/config.json`, `~/.supermemory-cursor/` (credentials and hook state), and user/project MCP or hook registrations. Preserve permissions; do not place credential backups in a repository or shared drive.
+2. **Before replacing the artifact**, add `SUPERMEMORY_MCP_MODE=local` to the existing MCP launch environment or add `"mcpMode": "local"` to the existing config without deleting other fields. The old plugin ignores this new selector, and the new `cli.js mcp` consumes it. Keep every namespace override and REST base/key unchanged. Older custom servers keep legacy REST unless you explicitly opt into v5 after upgrading them.
+3. Retain the old registration and artifact as rollback material. Replace only the selected plugin artifact with the exact 1.2.4 candidate. If using a local import instead of a manager update, remove/disable the conflicting marketplace installation as required by Cursor's same-name precedence and confirm your policy permits local imports; do not run duplicate old/new hooks. No installer silently rewrites files or registrations.
+4. Reload Cursor and verify the effective artifact/version and the eight `supermemory_*` tools. Check `supermemory_get_config` with the active absolute workspace path, including any second workspace. Keep the local tool arguments and document/memory ID distinction; the hosted proxy is not an interchangeable local tool server.
+5. If the native manager/import or tools do not match, stop the new instance and restore the archived artifact/registrations. Restore original settings only if intentionally changed; preserve any newly acknowledged cursor state or new saved data rather than replaying old transcripts. The isolated probe preserves old cursors, pending recall and original files, but a native manager upgrade still needs its own verification.
+
 ## Commands
 
 | Command | Description |
@@ -86,6 +112,8 @@ run the `/supermemory-config` command.
 | `SUPERMEMORY_BASE_URL` | API base URL fallback when `SUPERMEMORY_API_URL` is unset |
 | `SUPERMEMORY_API_VERSION` | Explicit `v5` or `legacy` REST contract; overrides config `apiVersion` |
 | `SUPERMEMORY_MCP_URL` | Independent hosted MCP proxy endpoint; REST version selection does not change it |
+| `SUPERMEMORY_MCP_API_KEY` | Independent proxy credential; overrides the shared REST key only for hosted/proxy mode |
+| `SUPERMEMORY_MCP_MODE` | Explicit `local` or `hosted` MCP mode; overrides config `mcpMode` |
 | `SUPERMEMORY_REPO_TAG` | Override the unified repository container tag |
 | `SUPERMEMORY_USER_TAG` | Legacy Cursor personal container to continue reading |
 | `SUPERMEMORY_PROJECT_TAG` | Legacy Cursor project container to continue reading |
@@ -128,6 +156,7 @@ Per-workspace overrides. Add to `.gitignore` if it contains an API key. Project 
 | `apiKey` | Project-specific API key | — |
 | `baseUrl` | Override the Supermemory API base URL | Supermemory API |
 | `apiVersion` | `v5` or `legacy`; choose explicitly for an upgraded custom server | v5 for the hosted API root, legacy for custom endpoints |
+| `mcpMode` | `local` restores the eight catalog-era tools; `hosted` uses the current proxy | `hosted` |
 | `repoContainerTag` | Override the unified repository container | derived from normalized Git remote or project path |
 | `userContainerTag` | Legacy Cursor personal container to continue reading | — |
 | `projectContainerTag` | Legacy Cursor project container to continue reading | — |
@@ -148,6 +177,8 @@ The hosted API root (`https://api.supermemory.ai`, including equivalent case/def
 Recall explicitly uses memories search, threshold `0.55`, ten candidates per namespace, no reranking or query rewriting. The existing local configured threshold floor, five-result cap, excerpts and session dedup remain. Session context uses query-free profiles and renders both old string facts and v5 object facts. Reads and capture retain the three-second request budget and zero automatic transport retries. Capture keeps its generation IDs and POST append/diff semantics, advancing its cursor only on valid document acceptance; acceptance is not completed processing or exactly-once billing. Dynamic processing is retained and can delay newly recallable facts by minutes; no billable instant processing is enabled.
 
 These are client contract guarantees, not a live-backend historical-data/ranking parity claim. No namespace move, merge, deletion or backfill is performed. Hosted MCP tool schemas and approvals remain unchanged because MCP is a separate protocol.
+
+The hosted proxy still respects `SUPERMEMORY_MCP_URL`. With a custom REST base and the hosted MCP destination, it fails closed unless `SUPERMEMORY_MCP_API_KEY` explicitly supplies an independent credential; it never sends custom REST credentials to hosted MCP merely to discover tools. An explicitly configured custom MCP endpoint still uses its configured/shared credential as before. Endpoint case/default-port spellings do not bypass the guard. Notices do not echo key material or backend response details.
 
 ## Container tags
 
@@ -176,7 +207,7 @@ bun run typecheck && bun test
 bun run check:dist   # after committing the rebuilt dist/, rejects bundle drift
 ```
 
-Build with Bun 1.3.14 and the committed lockfile. The six standalone entrypoints stay in `dist/`; the CLI, profile, recall and capture entrypoints embed the official `supermemory@5.0.1` SDK where used, while the injection and approval entrypoints need no SDK. Upstream Apache-2.0 attribution is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and its full license ships under `licenses/`.
+Build with Bun 1.3.14 and the committed lockfile. The six existing entrypoints stay in `dist/`; the additive standalone `mcp-server.js` is loaded only in local mode. The SDK5 hooks, local MCP SDK5/SDK4 boundaries, MCP implementation and schema libraries are all bundled; no runtime node_modules is needed. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the copied upstream licenses are generated from the local bundle's included modules. The packed source also includes the lockfile, build script and typecheck config for reproduction.
 
 ### Testing from this repo
 
