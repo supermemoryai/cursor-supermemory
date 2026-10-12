@@ -2,7 +2,7 @@
   "name": "cursor-supermemory",
   "displayName": "Supermemory",
   "description": "Persistent AI memory for Cursor, Claude Code and Grok — powered by Supermemory",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "author": {
     "name": "Supermemory",
     "email": "dhravya@supermemory.com"

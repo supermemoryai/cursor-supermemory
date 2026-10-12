@@ -86,6 +86,7 @@ function loadConfig(cwd) {
     apiKey: process.env.SUPERMEMORY_API_KEY ?? merged.apiKey ?? null,
     baseUrl: process.env.SUPERMEMORY_API_URL ?? process.env.SUPERMEMORY_BASE_URL ?? merged.baseUrl ?? null,
     apiVersion: process.env.SUPERMEMORY_API_VERSION ?? merged.apiVersion,
+    mcpMode: process.env.SUPERMEMORY_MCP_MODE ?? merged.mcpMode,
     similarityThreshold: merged.similarityThreshold,
     maxMemories: merged.maxMemories,
     maxProjectMemories: merged.maxProjectMemories,
@@ -3863,23 +3864,23 @@ function sdk(baseUrl, apiKey, tag) {
   return new Supermemory({
     apiKey,
     baseUrl: (baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, ""),
-    headers: headers(apiKey, tag),
+    headers: memoryHeaders(apiKey, tag),
     timeoutInSeconds: REQUEST_TIMEOUT_MS / 1000,
     maxRetries: 0
   });
 }
-async function sdkRequest(request) {
+async function memoryRequest(request) {
   try {
     return await request;
   } catch (error) {
-    const status = error?.statusCode;
+    const status = error?.statusCode ?? error?.status;
     throw new Error(status ? `Supermemory request failed with HTTP ${status}` : "Supermemory request failed or timed out");
   }
 }
 function sha2562(input) {
   return createHash2("sha256").update(input).digest("hex");
 }
-function headers(apiKey, containerTag) {
+function memoryHeaders(apiKey, containerTag) {
   const contentHash = sha2562(containerTag);
   const payload = [sha2562(apiKey), contentHash, INTEGRITY_VERSION].join(":");
   const signature = createHmac("sha256", SEED).update(payload).digest("base64url");
@@ -3894,7 +3895,7 @@ function headers(apiKey, containerTag) {
 async function post(baseUrl, apiKey, path3, containerTag, body) {
   const response = await fetch(`${(baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, "")}${path3}`, {
     method: "POST",
-    headers: headers(apiKey, containerTag),
+    headers: memoryHeaders(apiKey, containerTag),
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
   }).catch(() => {
@@ -3916,7 +3917,7 @@ async function getProfile(baseUrl, apiKey, containerTag, query, scope, apiVersio
     };
     const body = scope ? { filter: { field: "sm_scope", operator: "eq", value: scope } } : {};
     const [profile, searchResults] = await Promise.all([
-      sdkRequest(client.profile(containerTag, body, options)),
+      memoryRequest(client.profile(containerTag, body, options)),
       query ? searchMemories(baseUrl, apiKey, containerTag, query, scope, "v5", options.abortSignal) : undefined
     ]);
     return { ...profile, ...searchResults ? { searchResults } : {} };
@@ -3935,7 +3936,7 @@ async function searchMemories(baseUrl, apiKey, containerTag, query, scope, apiVe
   if (resolveApiVersion(baseUrl, apiVersion) === "legacy") {
     return getProfile(baseUrl, apiKey, containerTag, query, scope, "legacy");
   }
-  return sdkRequest(sdk(baseUrl, apiKey, containerTag).search(containerTag, {
+  return memoryRequest(sdk(baseUrl, apiKey, containerTag).search(containerTag, {
     query,
     searchMode: "memories",
     threshold: 0.55,
@@ -3966,7 +3967,7 @@ async function readNamespaces(tags, read) {
 
 // src/context.ts
 function formatContainerDirective(containerTag) {
-  return `This project's memory container: ${containerTag}. Pass \`containerTag: "${containerTag}"\` on every Supermemory MCP call (search_memory, add_memory, listMemories) so tool memories and session recall stay in the same space.`;
+  return `This project's memory container: ${containerTag}. Pass \`containerTag: "${containerTag}"\` on every hosted Supermemory MCP call (search_memory, add_memory, listMemories) so tool memories and session recall stay in the same space. Local \`supermemory_*\` aliases instead require \`workspaceRoot\` with the active workspace's absolute path and use \`container: "user"\` or \`"project"\`; those aliases resolve this same container with personal/project scope metadata.`;
 }
 function formatSessionContext(profiles, maxItems, containerTag, projectName) {
   const statics = [

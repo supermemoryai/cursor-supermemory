@@ -34,17 +34,19 @@ function sdk(baseUrl: string | null, apiKey: string, tag: string): Supermemory {
   return new Supermemory({
     apiKey,
     baseUrl: (baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, ""),
-    headers: headers(apiKey, tag),
+    headers: memoryHeaders(apiKey, tag),
     timeoutInSeconds: REQUEST_TIMEOUT_MS / 1_000,
     maxRetries: 0,
   });
 }
 
-async function sdkRequest<T>(request: PromiseLike<T>): Promise<T> {
+export async function memoryRequest<T>(request: PromiseLike<T>): Promise<T> {
   try {
     return await request;
   } catch (error) {
-    const status = (error as { statusCode?: number })?.statusCode;
+    const status =
+      (error as { statusCode?: number; status?: number })?.statusCode ??
+      (error as { status?: number })?.status;
     throw new Error(
       status
         ? `Supermemory request failed with HTTP ${status}`
@@ -73,7 +75,10 @@ function sha256(input: string): string {
   return createHash("sha256").update(input).digest("hex");
 }
 
-function headers(apiKey: string, containerTag: string): Record<string, string> {
+export function memoryHeaders(
+  apiKey: string,
+  containerTag: string,
+): Record<string, string> {
   const contentHash = sha256(containerTag);
   const payload = [sha256(apiKey), contentHash, INTEGRITY_VERSION].join(":");
   const signature = createHmac("sha256", SEED)
@@ -99,7 +104,7 @@ async function post(
     `${(baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, "")}${path}`,
     {
       method: "POST",
-      headers: headers(apiKey, containerTag),
+      headers: memoryHeaders(apiKey, containerTag),
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     },
@@ -132,7 +137,7 @@ export async function getProfile(
       ? { filter: { field: "sm_scope", operator: "eq", value: scope } }
       : {};
     const [profile, searchResults] = await Promise.all([
-      sdkRequest(client.profile(containerTag, body, options)),
+      memoryRequest(client.profile(containerTag, body, options)),
       query
         ? searchMemories(
             baseUrl,
@@ -172,7 +177,7 @@ export async function addMemory(
   const version = resolveApiVersion(baseUrl, apiVersion);
   const result =
     version === "v5"
-      ? await sdkRequest(
+      ? await memoryRequest(
           sdk(baseUrl, apiKey, containerTag).add(
             containerTag,
             {
@@ -199,6 +204,14 @@ export async function addMemory(
           customId: options.customId,
           entityContext: options.entityContext,
         });
+  validateDocumentAcceptance(result, version);
+  return result;
+}
+
+export function validateDocumentAcceptance(
+  result: any,
+  version: "v5" | "legacy",
+): void {
   if (
     typeof result?.id !== "string" ||
     !result.id.trim() ||
@@ -217,7 +230,6 @@ export async function addMemory(
   ) {
     throw new Error("Supermemory did not acknowledge the document");
   }
-  return result;
 }
 
 export async function searchMemories(
@@ -232,7 +244,7 @@ export async function searchMemories(
   if (resolveApiVersion(baseUrl, apiVersion) === "legacy") {
     return getProfile(baseUrl, apiKey, containerTag, query, scope, "legacy");
   }
-  return sdkRequest(
+  return memoryRequest(
     sdk(baseUrl, apiKey, containerTag).search(
       containerTag,
       {

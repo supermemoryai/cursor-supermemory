@@ -7,6 +7,8 @@ Explore this codebase deeply, then save architecture, tech stack, conventions, a
 
 Pass `containerTag` on every `add_memory` call, using the container tag from the `<supermemory-context>` block injected at session start.
 
+In local MCP mode, replace these save calls with `supermemory_add`, passing the active absolute `workspaceRoot`, the same `content`, and `container: "project"`. Use `supermemory_search` with that workspace/container for any recall step. Do not pass hosted `containerTag` arguments to local aliases.
+
 ## Phase 0: Detect Ecosystem
 
 Before anything else, determine the primary tech stack by checking which manifest files exist:

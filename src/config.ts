@@ -1,6 +1,7 @@
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import { loadCredentials } from "./auth.ts";
 
 export const GLOBAL_CONFIG_PATH = path.join(os.homedir(), ".config", "cursor", "supermemory.json");
@@ -11,15 +12,39 @@ export function getProjectConfigPath(cwd: string): string {
 
 export function writeConfig(updates: Partial<Omit<Config, "apiKey">>, scope: "project" | "global", cwd = process.cwd()): void {
   const filePath = scope === "project" ? getProjectConfigPath(cwd) : GLOBAL_CONFIG_PATH;
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const existing = readJson(filePath) ?? {};
-  fs.writeFileSync(filePath, JSON.stringify({ ...existing, ...updates }, null, 2));
+  let existing: Record<string, unknown> = {};
+  if (fs.existsSync(filePath)) {
+    try {
+      existing = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      if (!existing || typeof existing !== "object" || Array.isArray(existing)) throw new Error();
+    } catch {
+      throw new Error("Existing Supermemory config is invalid; repair it before updating.");
+    }
+  }
+  const targetPath = fs.existsSync(filePath) ? fs.realpathSync(filePath) : filePath;
+  const mode = fs.existsSync(targetPath) ? fs.statSync(targetPath).mode & 0o777 : 0o600;
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  const temporaryPath = path.join(path.dirname(targetPath), `.${path.basename(targetPath)}.${randomUUID()}.tmp`);
+  try {
+    const descriptor = fs.openSync(temporaryPath, "wx", 0o600);
+    try {
+      fs.writeFileSync(descriptor, JSON.stringify({ ...existing, ...updates }, null, 2));
+      fs.fchmodSync(descriptor, mode);
+      fs.fsyncSync(descriptor);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    fs.renameSync(temporaryPath, targetPath);
+  } finally {
+    fs.rmSync(temporaryPath, { force: true });
+  }
 }
 
 export interface Config {
   apiKey: string | null;
   baseUrl: string | null;
   apiVersion?: "v5" | "legacy";
+  mcpMode?: "hosted" | "local";
   similarityThreshold: number;
   maxMemories: number;
   maxProjectMemories: number;
@@ -83,6 +108,7 @@ export function loadConfig(cwd?: string): Config {
       merged.baseUrl ??
       null,
     apiVersion: process.env.SUPERMEMORY_API_VERSION ?? merged.apiVersion,
+    mcpMode: process.env.SUPERMEMORY_MCP_MODE ?? merged.mcpMode,
     similarityThreshold: merged.similarityThreshold,
     maxMemories: merged.maxMemories,
     maxProjectMemories: merged.maxProjectMemories,

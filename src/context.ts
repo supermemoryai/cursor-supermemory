@@ -1,6 +1,6 @@
 // Without an explicit tag the hosted server writes to the active space, where hook recall never looks.
 export function formatContainerDirective(containerTag: string): string {
-  return `This project's memory container: ${containerTag}. Pass \`containerTag: "${containerTag}"\` on every Supermemory MCP call (search_memory, add_memory, listMemories) so tool memories and session recall stay in the same space.`;
+  return `This project's memory container: ${containerTag}. Pass \`containerTag: "${containerTag}"\` on every hosted Supermemory MCP call (search_memory, add_memory, listMemories) so tool memories and session recall stay in the same space. Local \`supermemory_*\` aliases instead require \`workspaceRoot\` with the active workspace's absolute path and use \`container: "user"\` or \`"project"\`; those aliases resolve this same container with personal/project scope metadata.`;
 }
 
 export function formatSessionContext(
