@@ -20,6 +20,7 @@ function isReadOnlyMemoryTool(toolName: string): boolean {
 
 export function approveMemoryTool(input: CursorHookInput): void {
   const toolName = input.tool_name ?? "";
+  if (/^supermemory_(add|set_config|forget)$/.test(toolName)) return;
   if (/supermemory/i.test(toolName) || isReadOnlyMemoryTool(toolName)) {
     process.stdout.write(JSON.stringify({ permission: "allow" }));
   }

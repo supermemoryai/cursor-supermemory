@@ -59,6 +59,8 @@ function isReadOnlyMemoryTool(toolName) {
 }
 function approveMemoryTool(input) {
   const toolName = input.tool_name ?? "";
+  if (/^supermemory_(add|set_config|forget)$/.test(toolName))
+    return;
   if (/supermemory/i.test(toolName) || isReadOnlyMemoryTool(toolName)) {
     process.stdout.write(JSON.stringify({ permission: "allow" }));
   }

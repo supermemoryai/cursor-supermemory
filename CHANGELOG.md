@@ -2,6 +2,8 @@
 
 ## 1.2.4
 
+- Keep bare local mutations under normal host confirmation and paginate scoped listings after complete bounded filtering/deduplication, with truthful errors for incomplete scans.
+
 - Restore the catalog's eight local MCP aliases with SDK5 core operations, per-call workspace configuration and key/base routing, unchanged namespace/scope semantics, document-list resource identity and validated destructive outcomes.
 - Add explicit `mcpMode` / `SUPERMEMORY_MCP_MODE=local` selection and `mcp-local`; the existing `mcp` default remains the hosted proxy. Catalog 1.1.0 users must explicitly select local mode before updating—there is no inferred or automatic mode conversion.
 - Retain pinned SDK4.11.1 only for explicitly selected legacy/custom servers and exact-content forgetting. Do not substitute semantic deletion or retry a failed write against another API version.

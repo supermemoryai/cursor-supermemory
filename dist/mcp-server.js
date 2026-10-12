@@ -39929,6 +39929,8 @@ function validateDocumentAcceptance(result, version2) {
 var REQUEST_TIMEOUT_MS = 60000;
 var MAX_RETRIES = 2;
 var OPERATION_BUDGET_MS = REQUEST_TIMEOUT_MS * 5;
+var SCOPED_LIST_PAGE_SIZE = 100;
+var MAX_SCOPED_LIST_PAGES = 100;
 var DEFAULT_BASE_URL2 = "https://api.supermemory.ai";
 var httpAgent = new HttpAgent({ keepAlive: true });
 var httpsAgent = new HttpsAgent({ keepAlive: true });
@@ -40208,14 +40210,73 @@ class CursorMemoryClient {
     return { ...result, memories };
   }
   async listScoped(canonicalTag, containerTags, scope, limit, page = 1) {
-    const legacyTags = [
+    if (!Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(page * limit)) {
+      throw new Error("List limit and page must be positive integers in range.");
+    }
+    const tags = [
+      canonicalTag,
       ...new Set(containerTags.filter((tag) => tag && tag !== canonicalTag))
     ];
-    const settled = await Promise.allSettled([
-      this.listOne(canonicalTag, Math.max(limit * 10, 100), page, supportsScopedCanonicalTag(canonicalTag) ? scope : undefined),
-      ...legacyTags.map((tag) => this.listOne(tag, limit, page))
-    ]);
-    return mergeLists(fulfilledOrThrow(settled, "No memory containers could be listed"), limit);
+    const version2 = this.version();
+    const signal = AbortSignal.timeout(OPERATION_BUDGET_MS);
+    const responses = [];
+    let requests = 0;
+    for (const containerTag of tags) {
+      const memories = [];
+      const seen = new Set;
+      let totalItems;
+      for (let serverPage = 1;; serverPage++) {
+        if (signal.aborted || requests >= MAX_SCOPED_LIST_PAGES) {
+          throw new Error("Scoped document list could not complete within its scan budget.");
+        }
+        requests++;
+        const result = version2 === "legacy" ? await memoryRequest(this.raw(containerTag).documents.list({
+          containerTags: [containerTag],
+          limit: SCOPED_LIST_PAGE_SIZE,
+          page: serverPage,
+          sort: "updatedAt",
+          order: "desc"
+        }, {
+          signal,
+          maxRetries: MAX_RETRIES,
+          timeout: REQUEST_TIMEOUT_MS
+        })) : await memoryRequest(this.sdk(containerTag).list(containerTag, "documents", {
+          limit: SCOPED_LIST_PAGE_SIZE,
+          page: serverPage,
+          sort: "updatedAt",
+          order: "desc"
+        }, {
+          abortSignal: signal,
+          maxRetries: MAX_RETRIES,
+          timeoutInSeconds: REQUEST_TIMEOUT_MS / 1000
+        }));
+        const documents = version2 === "legacy" ? result.memories : result.documents;
+        const pagination = result.pagination;
+        if (!Array.isArray(documents) || !pagination || pagination.currentPage !== serverPage || !Number.isSafeInteger(pagination.totalItems) || pagination.totalItems < 0 || !Number.isSafeInteger(pagination.totalPages) || pagination.totalPages !== Math.ceil(pagination.totalItems / SCOPED_LIST_PAGE_SIZE) && !(pagination.totalItems === 0 && pagination.totalPages === 1) || pagination.limit !== undefined && pagination.limit !== SCOPED_LIST_PAGE_SIZE || totalItems !== undefined && pagination.totalItems !== totalItems || documents.length !== Math.min(SCOPED_LIST_PAGE_SIZE, Math.max(0, pagination.totalItems - (serverPage - 1) * SCOPED_LIST_PAGE_SIZE))) {
+          throw new Error("Supermemory returned incomplete or invalid scoped document pagination.");
+        }
+        totalItems = pagination.totalItems;
+        for (const document of documents) {
+          const normalized = version2 === "legacy" ? document : { ...normalizeResult(document), containerTags: [containerTag] };
+          if (!document || typeof document.id !== "string" || !document.id.trim() || seen.has(document.id) || typeof normalized.updatedAt !== "string" || !Number.isFinite(Date.parse(normalized.updatedAt))) {
+            throw new Error("Supermemory returned an invalid or repeated scoped document.");
+          }
+          seen.add(document.id);
+          if (containerTag !== canonicalTag || !supportsScopedCanonicalTag(canonicalTag) || resultMetadata(normalized).sm_scope === scope) {
+            memories.push(normalized);
+          }
+        }
+        if (serverPage >= pagination.totalPages)
+          break;
+      }
+      responses.push({ memories });
+    }
+    if (signal.aborted) {
+      throw new Error("Scoped document list exceeded its operation deadline.");
+    }
+    return {
+      memories: mergeLists(responses, page * limit).memories.slice((page - 1) * limit, page * limit)
+    };
   }
   async listMany(containerTags, limit, page = 1) {
     const settled = await Promise.allSettled([...new Set(containerTags.filter(Boolean))].map((tag) => this.listOne(tag, limit, page)));
