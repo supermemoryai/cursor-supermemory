@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { loadConfig, getApiKey } from "../config.ts";
+import { loadConfig, getAuthToken, isConfigured } from "../config.ts";
 import { getSearches } from "../hook-api.ts";
 import { readHookState, writeHookState } from "../hook-state.ts";
 import { getResolvedTags } from "../tags.ts";
@@ -110,18 +110,18 @@ export async function runPromptRecall(input: CursorHookInput): Promise<void> {
   try {
     const root = workspaceRoot(input);
     const config = loadConfig(root);
-    const apiKey = getApiKey(config);
-    if (!apiKey) {
+    if (!isConfigured(config)) {
       process.stdout.write(JSON.stringify({ continue: true }));
       return;
     }
+    const auth = () => getAuthToken(config);
 
     const id = conversationId(input);
     const state = readHookState(id);
     const tags = getResolvedTags(root, config);
     const profiles = await getSearches(
       config.baseUrl,
-      apiKey,
+      auth,
       tags.allReads,
       prompt!.slice(0, MAX_QUERY_LENGTH),
       config.apiVersion,

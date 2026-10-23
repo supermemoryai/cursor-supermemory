@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Sign in with OAuth 2.1 (dynamic client registration and PKCE) instead of a browser-issued API key. Tokens refresh automatically across hooks and the MCP proxy; `logout` revokes them. API keys from the environment, config or an existing credentials file keep working and take precedence.
+
 ## 1.2.3
 
 - Use the bundled official Supermemory 5.0.1 SDK for hosted REST profile, search and document capture, preserving existing namespace strings, metadata and incremental generation IDs.

@@ -1,7 +1,6 @@
 import { createHash, createHmac } from "node:crypto";
 import { Supermemory, type AddRequest, type ProfileRequest } from "supermemory";
-
-const DEFAULT_BASE_URL = "https://api.supermemory.ai";
+import { DEFAULT_API_URL as DEFAULT_BASE_URL } from "./config.ts";
 const REQUEST_TIMEOUT_MS = 3_000;
 const INTEGRITY_VERSION = 1;
 const SEED = "7f2a9c4b8e1d6f3a5c0b9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a";
@@ -30,7 +29,15 @@ export function resolveApiVersion(
     : "legacy";
 }
 
-function sdk(baseUrl: string | null, apiKey: string, tag: string): Supermemory {
+// A static API key, or a resolver called before every request so OAuth tokens stay current.
+export type AuthSource = string | (() => Promise<string>);
+
+function resolveAuth(auth: AuthSource): Promise<string> {
+  return typeof auth === "function" ? auth() : Promise.resolve(auth);
+}
+
+async function sdk(baseUrl: string | null, auth: AuthSource, tag: string): Promise<Supermemory> {
+  const apiKey = await resolveAuth(auth);
   return new Supermemory({
     apiKey,
     baseUrl: (baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, ""),
@@ -90,11 +97,12 @@ function headers(apiKey: string, containerTag: string): Record<string, string> {
 
 async function post(
   baseUrl: string | null,
-  apiKey: string,
+  auth: AuthSource,
   path: string,
   containerTag: string,
   body: Record<string, unknown>,
 ): Promise<any> {
+  const apiKey = await resolveAuth(auth);
   const response = await fetch(
     `${(baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, "")}${path}`,
     {
@@ -116,14 +124,14 @@ async function post(
 
 export async function getProfile(
   baseUrl: string | null,
-  apiKey: string,
+  auth: AuthSource,
   containerTag: string,
   query?: string,
   scope?: "personal" | "project",
   apiVersion?: string,
 ): Promise<any> {
   if (resolveApiVersion(baseUrl, apiVersion) === "v5") {
-    const client = sdk(baseUrl, apiKey, containerTag);
+    const client = await sdk(baseUrl, auth, containerTag);
     const options = {
       abortSignal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       maxRetries: 0,
@@ -136,7 +144,7 @@ export async function getProfile(
       query
         ? searchMemories(
             baseUrl,
-            apiKey,
+            auth,
             containerTag,
             query,
             scope,
@@ -147,7 +155,7 @@ export async function getProfile(
     ]);
     return { ...profile, ...(searchResults ? { searchResults } : {}) };
   }
-  return post(baseUrl, apiKey, "/v4/profile", containerTag, {
+  return post(baseUrl, auth, "/v4/profile", containerTag, {
     containerTag,
     ...(query ? { q: query } : {}),
     ...(scope
@@ -162,7 +170,7 @@ export async function getProfile(
 
 export async function addMemory(
   baseUrl: string | null,
-  apiKey: string,
+  auth: AuthSource,
   content: string,
   containerTag: string,
   metadata: Record<string, unknown>,
@@ -173,7 +181,7 @@ export async function addMemory(
   const result =
     version === "v5"
       ? await sdkRequest(
-          sdk(baseUrl, apiKey, containerTag).add(
+          (await sdk(baseUrl, auth, containerTag)).add(
             containerTag,
             {
               content,
@@ -192,7 +200,7 @@ export async function addMemory(
             },
           ),
         )
-      : await post(baseUrl, apiKey, "/v3/documents", containerTag, {
+      : await post(baseUrl, auth, "/v3/documents", containerTag, {
           content,
           containerTag,
           metadata: { sm_source: "cursor", ...metadata },
@@ -222,7 +230,7 @@ export async function addMemory(
 
 export async function searchMemories(
   baseUrl: string | null,
-  apiKey: string,
+  auth: AuthSource,
   containerTag: string,
   query: string,
   scope?: "personal" | "project",
@@ -230,10 +238,11 @@ export async function searchMemories(
   abortSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS),
 ): Promise<any> {
   if (resolveApiVersion(baseUrl, apiVersion) === "legacy") {
-    return getProfile(baseUrl, apiKey, containerTag, query, scope, "legacy");
+    return getProfile(baseUrl, auth, containerTag, query, scope, "legacy");
   }
+  const client = await sdk(baseUrl, auth, containerTag);
   return sdkRequest(
-    sdk(baseUrl, apiKey, containerTag).search(
+    client.search(
       containerTag,
       {
         query,
@@ -259,7 +268,7 @@ export async function searchMemories(
 
 export function getProfiles(
   baseUrl: string | null,
-  apiKey: string,
+  auth: AuthSource,
   tags: string[],
   query?: string,
   canonicalScope?: "personal" | "project",
@@ -268,7 +277,7 @@ export function getProfiles(
   return readNamespaces(tags, (tag, index) =>
     getProfile(
       baseUrl,
-      apiKey,
+      auth,
       tag,
       query,
       index === 0 ? canonicalScope : undefined,
@@ -279,13 +288,13 @@ export function getProfiles(
 
 export function getSearches(
   baseUrl: string | null,
-  apiKey: string,
+  auth: AuthSource,
   tags: string[],
   query: string,
   apiVersion?: string,
 ): Promise<any[]> {
   return readNamespaces(tags, (tag) =>
-    searchMemories(baseUrl, apiKey, tag, query, undefined, apiVersion),
+    searchMemories(baseUrl, auth, tag, query, undefined, apiVersion),
   );
 }
 

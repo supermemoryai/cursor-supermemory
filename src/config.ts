@@ -1,7 +1,17 @@
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
-import { loadCredentials } from "./auth.ts";
+import {
+  authRequired,
+  getAccessToken,
+  getOAuthConfig,
+  hasOAuthCredentials,
+  loadCredentialData,
+  loadCredentials,
+} from "./auth.ts";
+
+export const DEFAULT_API_URL = "https://api.supermemory.ai";
+export const DEFAULT_MCP_URL = "https://mcp.supermemory.ai/mcp";
 
 export const GLOBAL_CONFIG_PATH = path.join(os.homedir(), ".config", "cursor", "supermemory.json");
 
@@ -100,9 +110,63 @@ export function loadConfig(cwd?: string): Config {
   };
 }
 
+// API keys (env, config, or a saved `{apiKey}` file) take precedence over OAuth.
 export function getApiKey(config: Config): string | null {
   if (config.apiKey) return config.apiKey;
+  return loadCredentials() ?? null;
+}
 
-  const creds = loadCredentials();
-  return creds?.apiKey ?? null;
+export function getApiBaseUrl(config: Config): string {
+  return config.baseUrl || DEFAULT_API_URL;
+}
+
+function normalizeUrl(value: string): string | null {
+  try {
+    const url = new URL(value.trim());
+    return ["http:", "https:"].includes(url.protocol) ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+// The OAuth resource. Hosted `api.*` backends map to their `mcp.*` sibling; any
+// other custom backend must name its MCP server explicitly.
+export function getMcpUrl(config: Config): string {
+  if (process.env.SUPERMEMORY_MCP_URL) {
+    const configured = normalizeUrl(process.env.SUPERMEMORY_MCP_URL);
+    if (!configured) throw new Error("Invalid SUPERMEMORY_MCP_URL");
+    return configured;
+  }
+  if (!config.baseUrl) return DEFAULT_MCP_URL;
+  const api = new URL(config.baseUrl);
+  if (api.hostname.startsWith("api.")) {
+    api.hostname = api.hostname.replace(/^api\./, "mcp.");
+    api.pathname = "/mcp";
+    api.search = "";
+    api.hash = "";
+    return api.toString();
+  }
+  throw new Error("Set SUPERMEMORY_MCP_URL for OAuth or MCP on a custom Supermemory backend.");
+}
+
+export function getAuthType(config: Config): "api_key" | "oauth" | "none" {
+  if (getApiKey(config)) return "api_key";
+  return loadCredentialData()?.type === "oauth" ? "oauth" : "none";
+}
+
+export function isConfigured(config: Config): boolean {
+  if (getApiKey(config)) return true;
+  try {
+    return hasOAuthCredentials(getOAuthConfig(getApiBaseUrl(config), getMcpUrl(config)));
+  } catch {
+    return false;
+  }
+}
+
+// Resolve the bearer for each request so refreshes and logins in other processes are seen.
+export async function getAuthToken(config: Config, timeoutMs?: number): Promise<string> {
+  const apiKey = getApiKey(config);
+  if (apiKey) return apiKey;
+  if (loadCredentialData()?.type !== "oauth") throw authRequired();
+  return getAccessToken(getOAuthConfig(getApiBaseUrl(config), getMcpUrl(config)), timeoutMs);
 }

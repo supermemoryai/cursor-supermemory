@@ -1,4 +1,5 @@
-import { loadConfig, getApiKey } from "../config.ts";
+import { loadConfig, getAuthToken, isConfigured } from "../config.ts";
+import { isAuthPending, isAuthRequired } from "../auth.ts";
 import { getResolvedTags } from "../tags.ts";
 import { getProfiles, resolveApiVersion } from "../hook-api.ts";
 import { formatContainerDirective, formatSessionContext } from "../context.ts";
@@ -18,8 +19,7 @@ async function main() {
 
   const workspaceRoot = input.workspace_roots?.[0] || process.cwd();
   const config = loadConfig(workspaceRoot);
-  const apiKey = getApiKey(config);
-  if (!apiKey) {
+  const notConnected = () => {
     const pluginRoot = pluginRootFromEnv();
     const loginCmd = pluginRoot
       ? `node "${pluginRoot}/dist/cli.js" login`
@@ -29,8 +29,12 @@ async function main() {
         additional_context: `<supermemory-status>Supermemory is not connected. Ask the user to run \`${loginCmd}\` before relying on persistent memory.</supermemory-status>`,
       }),
     );
+  };
+  if (!isConfigured(config)) {
+    notConnected();
     return;
   }
+  const auth = () => getAuthToken(config);
 
   // Inject user email from input for tag resolution
   if (input.user_email && !process.env.CURSOR_USER_EMAIL) {
@@ -43,7 +47,7 @@ async function main() {
     profiles = config.injectProfile
       ? await getProfiles(
           config.baseUrl,
-          apiKey,
+          auth,
           tags.allReads,
           resolveApiVersion(config.baseUrl, config.apiVersion) === "legacy"
             ? tags.projectName
@@ -52,7 +56,20 @@ async function main() {
           config.apiVersion,
         )
       : [];
-  } catch {
+  } catch (error) {
+    if (isAuthRequired(error)) {
+      notConnected();
+      return;
+    }
+    if (isAuthPending(error)) {
+      process.stdout.write(
+        JSON.stringify({
+          additional_context:
+            "<supermemory-status>The Supermemory sign-in is still refreshing. Continue without memory for now, and do not assume this project has no saved memories.</supermemory-status>",
+        }),
+      );
+      return;
+    }
     process.stdout.write(
       JSON.stringify({
         additional_context:

@@ -12,4 +12,4 @@ node "$(ls -d ~/.cursor/plugins/local/cursor-supermemory ~/.cursor/plugins/cache
 
 This opens your browser to connect your Supermemory account to Cursor. Once connected, the AI will have persistent memory across all your coding sessions.
 
-If the browser doesn't open automatically, visit: https://app.supermemory.ai/auth/connect?client=cursor
+If the browser doesn't open automatically, open the authorization URL the command prints.

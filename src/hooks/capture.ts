@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { loadConfig, getApiKey } from "../config.ts";
+import { loadConfig, getAuthToken, isConfigured } from "../config.ts";
 import { addMemory, AGENT_ENTITY_CONTEXT } from "../hook-api.ts";
 import {
   deleteHookState,
@@ -132,8 +132,8 @@ async function capture(input: CursorHookInput): Promise<void> {
   try {
     const root = workspaceRoot(input);
     const config = loadConfig(root);
-    const apiKey = getApiKey(config);
-    if (!apiKey) return;
+    if (!isConfigured(config)) return;
+    const auth = () => getAuthToken(config);
 
     const id = conversationId(input);
     const state = readHookState(id);
@@ -159,7 +159,7 @@ async function capture(input: CursorHookInput): Promise<void> {
       createHash("sha256").update(content).digest("hex").slice(0, 32);
     await addMemory(
       config.baseUrl,
-      apiKey,
+      auth,
       content,
       tags.canonical,
       {

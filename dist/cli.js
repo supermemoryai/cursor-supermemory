@@ -30,105 +30,449 @@ import fs2 from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
-import http from "node:http";
-import { spawn } from "node:child_process";
+import childProcess from "node:child_process";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { createServer } from "node:http";
+// package.json
+var version = "1.2.3";
+
+// src/auth.ts
 var CREDENTIALS_DIR = path.join(os.homedir(), ".supermemory-cursor");
 var CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "credentials.json");
-var AUTH_PORT = 19878;
-var AUTH_URL = process.env.SUPERMEMORY_AUTH_URL || "https://console.supermemory.ai/auth/connect";
-var SUCCESS_HTML = `<!DOCTYPE html>
-<html><head><style>
-  body { background: #111; color: #fff; font-family: system-ui; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-  h1 { font-size: 2rem; }
-</style></head><body><h1>Connected to Cursor!</h1></body></html>`;
+var CLIENT_FILE = path.join(CREDENTIALS_DIR, "oauth-client.json");
+var LOCK_FILE = path.join(CREDENTIALS_DIR, "auth.lock");
+var AUTH_PORT = 19879;
+var REDIRECT_URI = `http://127.0.0.1:${AUTH_PORT}/callback`;
+var SCOPE = "openid profile email offline_access";
+var REFRESH_TIMEOUT = 3000;
+var REFRESH_REQUEST_TIMEOUT = 1e4;
+var REFRESH_SKEW = 60000;
+var configuredAuthTimeout = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT);
+var AUTH_TIMEOUT = Number.isFinite(configuredAuthTimeout) && configuredAuthTimeout > 0 ? configuredAuthTimeout : 5 * 60000;
+function page(title, message) {
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>${title} - Supermemory</title><style>
+  body { background: #111; color: #fff; font-family: system-ui; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+  h1 { font-size: 2rem; margin: 0 0 12px; } p { color: #aaa; }
+</style></head><body><h1>${title}</h1><p>${message}</p></body></html>`;
+}
+var SUCCESS_HTML = page("Connected to Cursor!", "You can close this tab and return to Cursor.");
+var DENIED_HTML = page("Authorization denied", "Supermemory was not connected. Return to Cursor and run login again to retry.");
+var FAILED_HTML = page("Connection failed", "Return to Cursor and run login again.");
+
+class AuthError extends Error {
+  code;
+  constructor(message, code) {
+    super(message);
+    this.code = code;
+  }
+}
+function isAuthRequired(error) {
+  return error instanceof AuthError && error.code === "AUTH_REQUIRED";
+}
+function authRequired() {
+  return new AuthError("Supermemory authentication required. Run `cursor-supermemory login`, or set SUPERMEMORY_API_KEY.", "AUTH_REQUIRED");
+}
+function readJson(file) {
+  try {
+    const value = JSON.parse(fs.readFileSync(file, "utf-8"));
+    return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+function loadCredentialData() {
+  const data = readJson(CREDENTIALS_FILE);
+  return data?.type === "oauth" || data?.apiKey ? data : null;
+}
 function loadCredentials() {
-  try {
-    if (!fs.existsSync(CREDENTIALS_FILE))
-      return null;
-    const data = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, "utf-8"));
-    if (data.apiKey)
-      return data;
-    return null;
-  } catch {
-    return null;
-  }
+  const data = loadCredentialData();
+  return data?.type === "oauth" ? undefined : data?.apiKey;
 }
-function saveCredentials(apiKey) {
+function writeJson(file, data) {
   fs.mkdirSync(CREDENTIALS_DIR, { recursive: true, mode: 448 });
-  const data = { apiKey, createdAt: new Date().toISOString() };
-  fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(data, null, 2), { mode: 384 });
-}
-function clearCredentials() {
+  fs.chmodSync(CREDENTIALS_DIR, 448);
+  const temporary = `${file}.${randomUUID()}.tmp`;
   try {
-    if (fs.existsSync(CREDENTIALS_FILE)) {
-      fs.unlinkSync(CREDENTIALS_FILE);
-      return true;
-    }
-    return false;
-  } catch {
-    return false;
+    fs.writeFileSync(temporary, JSON.stringify(data, null, 2), { mode: 384, flag: "wx" });
+    fs.renameSync(temporary, file);
+  } finally {
+    fs.rmSync(temporary, { force: true });
   }
 }
-function openBrowser(url) {
-  const platform = process.platform;
-  const command = platform === "win32" ? "cmd" : platform === "darwin" ? "open" : "xdg-open";
-  const args = platform === "win32" ? ["/c", "start", "", url] : [url];
-  spawn(command, args, { stdio: "ignore", detached: true }).unref();
+function recoverAbandonedLock() {
+  let recovery;
+  let linked = false;
+  try {
+    const original = fs.statSync(LOCK_FILE);
+    recovery = `${LOCK_FILE}.${original.dev}.${original.ino}.recovery`;
+    fs.linkSync(LOCK_FILE, recovery);
+    linked = true;
+    const snapshot = fs.statSync(recovery);
+    if (snapshot.ino !== original.ino || snapshot.dev !== original.dev)
+      return;
+    const owner = readJson(recovery);
+    let abandoned = false;
+    if (owner && Number.isInteger(owner.pid) && owner.pid > 0) {
+      try {
+        process.kill(owner.pid, 0);
+      } catch (error) {
+        abandoned = error.code === "ESRCH";
+      }
+    } else {
+      abandoned = Date.now() - snapshot.mtimeMs > 10 * 60000;
+    }
+    if (abandoned) {
+      const current = fs.statSync(LOCK_FILE);
+      if (current.ino === original.ino && current.dev === original.dev)
+        fs.unlinkSync(LOCK_FILE);
+    }
+  } catch (error) {
+    if (!["ENOENT", "EEXIST"].includes(error.code ?? ""))
+      throw error;
+  } finally {
+    if (linked && recovery)
+      fs.rmSync(recovery, { force: true });
+  }
 }
-async function startAuthFlow(timeoutMs = 120000) {
-  return new Promise((resolve) => {
-    let settled = false;
-    let timer;
-    const finish = (result) => {
-      if (settled)
-        return;
-      settled = true;
-      if (timer)
-        clearTimeout(timer);
-      server.close();
-      resolve(result);
-    };
-    const server = http.createServer((req, res) => {
-      const url = new URL(req.url ?? "/", `http://127.0.0.1:${AUTH_PORT}`);
-      if (url.pathname !== "/callback") {
-        res.writeHead(404);
-        res.end("Not found");
-        return;
+async function withAuthLock(action, timeoutMs) {
+  fs.mkdirSync(CREDENTIALS_DIR, { recursive: true, mode: 448 });
+  const deadline = Date.now() + timeoutMs;
+  let descriptor;
+  while (descriptor === undefined) {
+    try {
+      descriptor = fs.openSync(LOCK_FILE, "wx", 384);
+    } catch (error) {
+      if (error.code !== "EEXIST")
+        throw error;
+      recoverAbandonedLock();
+      if (Date.now() >= deadline)
+        throw new Error("Supermemory authentication is busy. Try again.");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+  try {
+    fs.writeFileSync(descriptor, JSON.stringify({ pid: process.pid }));
+    return await action(Math.max(1, deadline - Date.now()));
+  } finally {
+    fs.closeSync(descriptor);
+    fs.rmSync(LOCK_FILE, { force: true });
+  }
+}
+function secureUrl(value) {
+  const url = new URL(value);
+  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  if (url.username || url.password || url.hash || url.search || url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+    throw new Error("OAuth requires HTTPS (HTTP is allowed only for loopback development).");
+  }
+  return url.toString().replace(/\/+$/, "");
+}
+function getOAuthConfig(baseUrl, mcpUrl) {
+  const apiBaseUrl = secureUrl(baseUrl);
+  return {
+    apiBaseUrl,
+    issuer: secureUrl(process.env.SUPERMEMORY_OAUTH_ISSUER || `${apiBaseUrl}/api/auth`),
+    resource: secureUrl(mcpUrl)
+  };
+}
+function sameConfig(credentials, config) {
+  return credentials?.apiBaseUrl === config.apiBaseUrl && credentials?.issuer === config.issuer && credentials?.resource === config.resource;
+}
+function hasOAuthCredentials(config) {
+  const credentials = loadCredentialData();
+  return credentials?.type === "oauth" && sameConfig(credentials, config) && (!!credentials.refreshToken || !!credentials.accessToken && credentials.expiresAt > Date.now() + REFRESH_SKEW);
+}
+function issuerEndpoint(value, issuer) {
+  const endpoint = secureUrl(value);
+  if (new URL(endpoint).origin !== new URL(issuer).origin) {
+    throw new Error("OAuth endpoint does not belong to the configured issuer.");
+  }
+  return endpoint;
+}
+async function oauthRequest(url, options) {
+  const response = await fetch(url, { ...options, redirect: "error" });
+  const body = await response.json().catch(() => null);
+  const data = body && typeof body === "object" ? body : {};
+  if (!response.ok) {
+    const code = ["invalid_grant", "invalid_client", "access_denied"].includes(String(data.error)) ? String(data.error) : "oauth_request_failed";
+    throw new AuthError(`Supermemory authorization failed (${code}, HTTP ${response.status}).`, code);
+  }
+  return data;
+}
+async function registerClient(config, signal) {
+  const saved = readJson(CLIENT_FILE);
+  if (sameConfig(saved, config) && saved?.clientId && saved.redirectUri === REDIRECT_URI)
+    return saved;
+  const issuer = new URL(config.issuer);
+  const metadata = await oauthRequest(new URL(`/.well-known/oauth-authorization-server${issuer.pathname.replace(/\/$/, "")}`, issuer), { signal });
+  if (metadata.issuer !== config.issuer)
+    throw new Error("OAuth discovery returned an unexpected issuer.");
+  const authorizationEndpoint = issuerEndpoint(String(metadata.authorization_endpoint), config.issuer);
+  const tokenEndpoint = issuerEndpoint(String(metadata.token_endpoint), config.issuer);
+  const registrationEndpoint = issuerEndpoint(String(metadata.registration_endpoint), config.issuer);
+  const revocationEndpoint = issuerEndpoint(String(metadata.revocation_endpoint), config.issuer);
+  const registration = await oauthRequest(registrationEndpoint, {
+    method: "POST",
+    signal,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_name: "Supermemory for Cursor",
+      client_uri: "https://github.com/supermemoryai/cursor-supermemory",
+      software_id: "cursor-supermemory",
+      software_version: version,
+      redirect_uris: [REDIRECT_URI],
+      token_endpoint_auth_method: "none",
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      scope: SCOPE
+    })
+  });
+  if (typeof registration.client_id !== "string" || !registration.client_id || registration.token_endpoint_auth_method !== "none") {
+    throw new Error("OAuth registration did not return a public client.");
+  }
+  const client = {
+    ...config,
+    clientId: registration.client_id,
+    redirectUri: REDIRECT_URI,
+    authorizationEndpoint,
+    tokenEndpoint,
+    revocationEndpoint
+  };
+  signal.throwIfAborted();
+  writeJson(CLIENT_FILE, client);
+  return client;
+}
+async function exchangeToken(client, parameters, signal, previous) {
+  const data = await oauthRequest(issuerEndpoint(client.tokenEndpoint, client.issuer), {
+    method: "POST",
+    signal,
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: client.clientId,
+      resource: client.resource,
+      ...parameters
+    })
+  });
+  const refreshToken = data.refresh_token ?? previous?.refreshToken;
+  if (typeof data.access_token !== "string" || !data.access_token || typeof data.token_type !== "string" || data.token_type.toLowerCase() !== "bearer" || typeof data.expires_in !== "number" || !Number.isFinite(data.expires_in) || data.expires_in <= 0 || typeof refreshToken !== "string" || !refreshToken) {
+    throw new Error("OAuth returned an invalid token response.");
+  }
+  signal.throwIfAborted();
+  const credentials = {
+    type: "oauth",
+    apiBaseUrl: client.apiBaseUrl,
+    issuer: client.issuer,
+    resource: client.resource,
+    clientId: client.clientId,
+    redirectUri: client.redirectUri,
+    authorizationEndpoint: client.authorizationEndpoint,
+    tokenEndpoint: client.tokenEndpoint,
+    revocationEndpoint: client.revocationEndpoint,
+    accessToken: data.access_token,
+    refreshToken,
+    expiresAt: Date.now() + data.expires_in * 1000,
+    savedAt: new Date().toISOString()
+  };
+  writeJson(CREDENTIALS_FILE, credentials);
+  return data.access_token;
+}
+var pendingRefresh = null;
+function refreshCredentials(config) {
+  if (pendingRefresh)
+    return pendingRefresh;
+  const refresh = withAuthLock(async (remaining) => {
+    const credentials = loadCredentialData();
+    if (credentials?.type !== "oauth" || !sameConfig(credentials, config))
+      throw authRequired();
+    if (credentials.accessToken && credentials.expiresAt > Date.now() + REFRESH_SKEW)
+      return credentials.accessToken;
+    if (!credentials.refreshToken)
+      throw authRequired();
+    try {
+      return await exchangeToken(credentials, { grant_type: "refresh_token", refresh_token: credentials.refreshToken }, AbortSignal.timeout(remaining), credentials);
+    } catch (error) {
+      if (error instanceof AuthError && ["invalid_grant", "invalid_client"].includes(error.code)) {
+        const { accessToken: _access, refreshToken: _refresh, ...registration } = credentials;
+        writeJson(CREDENTIALS_FILE, registration);
+        if (error.code === "invalid_client")
+          fs.rmSync(CLIENT_FILE, { force: true });
+        throw authRequired();
       }
-      const apiKey = url.searchParams.get("apikey") || url.searchParams.get("api_key");
-      if (!apiKey?.startsWith("sm_")) {
-        res.writeHead(400);
-        res.end("Invalid API key");
-        return;
-      }
-      saveCredentials(apiKey);
-      res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(SUCCESS_HTML);
-      finish({ success: true, apiKey });
-    });
-    server.on("error", (error) => {
-      const detail = error.code === "EADDRINUSE" ? `Port ${AUTH_PORT} is already in use` : error.message;
-      finish({ success: false, error: detail });
-    });
-    server.listen(AUTH_PORT, "127.0.0.1", () => {
-      const callbackUrl = `http://localhost:${AUTH_PORT}/callback`;
-      const authUrl = `${AUTH_URL}?callback=${encodeURIComponent(callbackUrl)}&client=cursor`;
-      process.stderr.write(`
+      throw error;
+    }
+  }, REFRESH_REQUEST_TIMEOUT).finally(() => {
+    pendingRefresh = null;
+  });
+  refresh.catch(() => {});
+  pendingRefresh = refresh;
+  return refresh;
+}
+function waitFor(promise, timeoutMs) {
+  let timer;
+  const expired = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new AuthError("Supermemory token refresh is still in progress.", "AUTH_PENDING");
+      error.name = "TimeoutError";
+      reject(error);
+    }, timeoutMs);
+  });
+  return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
+}
+async function getAccessToken(config, timeoutMs = REFRESH_TIMEOUT) {
+  const saved = loadCredentialData();
+  if (saved?.type !== "oauth" || !sameConfig(saved, config))
+    throw authRequired();
+  if (saved.accessToken && saved.expiresAt > Date.now() + REFRESH_SKEW)
+    return saved.accessToken;
+  return waitFor(refreshCredentials(config), timeoutMs);
+}
+async function settleAuth() {
+  while (pendingRefresh) {
+    await pendingRefresh.catch(() => {});
+  }
+}
+async function clearCredentials() {
+  return withAuthLock(async (remaining) => {
+    const credentials = readJson(CREDENTIALS_FILE);
+    if (credentials?.type === "oauth" && credentials.refreshToken) {
+      await oauthRequest(issuerEndpoint(credentials.revocationEndpoint, credentials.issuer), {
+        method: "POST",
+        signal: AbortSignal.timeout(remaining),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: credentials.clientId,
+          token: credentials.refreshToken,
+          token_type_hint: "refresh_token"
+        })
+      });
+    }
+    const existed = fs.existsSync(CREDENTIALS_FILE);
+    fs.rmSync(CREDENTIALS_FILE, { force: true });
+    return existed;
+  }, REFRESH_TIMEOUT);
+}
+function run(command, args) {
+  return new Promise((resolve, reject) => {
+    childProcess.execFile(command, args, { windowsHide: true }, (error) => error ? reject(error) : resolve());
+  });
+}
+async function openUrl(url) {
+  const href = url.toString();
+  if (!/^https?:\/\//i.test(href))
+    throw new Error("Refusing to open non-http URL");
+  if (process.platform === "win32") {
+    try {
+      await run("rundll32.exe", ["url.dll,FileProtocolHandler", href]);
+      return;
+    } catch {}
+    await run("cmd.exe", ["/c", "start", '""', href]);
+    return;
+  }
+  await run(process.platform === "darwin" ? "open" : "xdg-open", [href]);
+}
+async function startAuthFlow(config, timeoutMs = AUTH_TIMEOUT) {
+  return withAuthLock(async (remaining) => {
+    const controller = new AbortController;
+    const timer = setTimeout(() => controller.abort(new Error("Authentication timed out")), remaining);
+    let server;
+    try {
+      return await new Promise((resolve, reject) => {
+        let client;
+        let exchanging = false;
+        const state = randomBytes(32).toString("base64url");
+        const verifier = randomBytes(32).toString("base64url");
+        controller.signal.addEventListener("abort", () => reject(controller.signal.reason), {
+          once: true
+        });
+        server = createServer(async (req, res) => {
+          res.setHeader("Cache-Control", "no-store");
+          res.setHeader("Referrer-Policy", "no-referrer");
+          let url;
+          try {
+            url = new URL(req.url || "/", REDIRECT_URI);
+          } catch {
+            res.writeHead(400).end();
+            return;
+          }
+          if (req.method !== "GET" || url.pathname !== "/callback") {
+            res.writeHead(404).end();
+            return;
+          }
+          const receivedState = Buffer.from(url.searchParams.get("state") || "");
+          if (!client || receivedState.length !== state.length || !timingSafeEqual(receivedState, Buffer.from(state)) || url.searchParams.has("iss") && url.searchParams.get("iss") !== client.issuer) {
+            res.writeHead(400).end("Invalid authorization state.");
+            return;
+          }
+          if (exchanging) {
+            res.writeHead(409).end();
+            return;
+          }
+          exchanging = true;
+          try {
+            if (url.searchParams.has("error")) {
+              throw new AuthError("Authorization was denied.", "access_denied");
+            }
+            const code = url.searchParams.get("code");
+            if (!code)
+              throw new Error("Authorization code missing.");
+            const token = await exchangeToken(client, {
+              grant_type: "authorization_code",
+              code,
+              code_verifier: verifier,
+              redirect_uri: REDIRECT_URI
+            }, controller.signal);
+            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }).end(SUCCESS_HTML, () => resolve(token));
+          } catch (error) {
+            const denied = error instanceof AuthError && error.code === "access_denied";
+            if (error instanceof AuthError && error.code === "invalid_client" && !controller.signal.aborted) {
+              fs.rmSync(CLIENT_FILE, { force: true });
+            }
+            res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" }).end(denied ? DENIED_HTML : FAILED_HTML, () => reject(error));
+          }
+        });
+        server.on("error", () => reject(new Error(`Cannot open the authentication callback port ${AUTH_PORT}. Retry after other logins finish.`)));
+        server.listen(AUTH_PORT, "127.0.0.1", async () => {
+          try {
+            const registered = await registerClient(config, controller.signal);
+            const authorizationUrl = new URL(issuerEndpoint(registered.authorizationEndpoint, registered.issuer));
+            authorizationUrl.search = new URLSearchParams({
+              client_id: registered.clientId,
+              redirect_uri: REDIRECT_URI,
+              response_type: "code",
+              scope: SCOPE,
+              resource: registered.resource,
+              code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+              code_challenge_method: "S256",
+              state,
+              prompt: "consent"
+            }).toString();
+            client = registered;
+            process.stderr.write(`
 Open this URL to connect Supermemory to Cursor:
 
-  ${authUrl}
+  ${authorizationUrl}
 
 Waiting...
 `);
-      openBrowser(authUrl);
-    });
-    timer = setTimeout(() => {
-      finish({ success: false, error: "Authentication timed out" });
-    }, timeoutMs);
-  });
+            openUrl(authorizationUrl).catch(() => process.stderr.write(`Could not open a browser. Open the URL above to continue.
+`));
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
+      server?.close();
+      server?.closeAllConnections();
+    }
+  }, timeoutMs);
 }
 
 // src/config.ts
+var DEFAULT_API_URL = "https://api.supermemory.ai";
+var DEFAULT_MCP_URL = "https://mcp.supermemory.ai/mcp";
 var GLOBAL_CONFIG_PATH = path2.join(os2.homedir(), ".config", "cursor", "supermemory.json");
 var DEFAULTS = {
   baseUrl: null,
@@ -143,7 +487,7 @@ var DEFAULTS = {
   userContainerTag: null,
   projectContainerTag: null
 };
-function readJson(filePath) {
+function readJson2(filePath) {
   try {
     if (!fs2.existsSync(filePath))
       return null;
@@ -156,7 +500,7 @@ function findProjectConfig(cwd) {
   let dir = cwd;
   while (true) {
     const configPath = path2.join(dir, ".cursor", ".supermemory", "config.json");
-    const data = readJson(configPath);
+    const data = readJson2(configPath);
     if (data)
       return data;
     const parent = path2.dirname(dir);
@@ -168,7 +512,7 @@ function findProjectConfig(cwd) {
 }
 function loadConfig(cwd) {
   const projectConfig = findProjectConfig(cwd || process.cwd());
-  const globalConfig = readJson(GLOBAL_CONFIG_PATH);
+  const globalConfig = readJson2(GLOBAL_CONFIG_PATH);
   const merged = { ...DEFAULTS, ...globalConfig, ...projectConfig };
   return {
     apiKey: process.env.SUPERMEMORY_API_KEY ?? merged.apiKey ?? null,
@@ -189,12 +533,62 @@ function loadConfig(cwd) {
 function getApiKey(config) {
   if (config.apiKey)
     return config.apiKey;
-  const creds = loadCredentials();
-  return creds?.apiKey ?? null;
+  return loadCredentials() ?? null;
+}
+function getApiBaseUrl(config) {
+  return config.baseUrl || DEFAULT_API_URL;
+}
+function normalizeUrl(value) {
+  try {
+    const url = new URL(value.trim());
+    return ["http:", "https:"].includes(url.protocol) ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+function getMcpUrl(config) {
+  if (process.env.SUPERMEMORY_MCP_URL) {
+    const configured = normalizeUrl(process.env.SUPERMEMORY_MCP_URL);
+    if (!configured)
+      throw new Error("Invalid SUPERMEMORY_MCP_URL");
+    return configured;
+  }
+  if (!config.baseUrl)
+    return DEFAULT_MCP_URL;
+  const api = new URL(config.baseUrl);
+  if (api.hostname.startsWith("api.")) {
+    api.hostname = api.hostname.replace(/^api\./, "mcp.");
+    api.pathname = "/mcp";
+    api.search = "";
+    api.hash = "";
+    return api.toString();
+  }
+  throw new Error("Set SUPERMEMORY_MCP_URL for OAuth or MCP on a custom Supermemory backend.");
+}
+function getAuthType(config) {
+  if (getApiKey(config))
+    return "api_key";
+  return loadCredentialData()?.type === "oauth" ? "oauth" : "none";
+}
+function isConfigured(config) {
+  if (getApiKey(config))
+    return true;
+  try {
+    return hasOAuthCredentials(getOAuthConfig(getApiBaseUrl(config), getMcpUrl(config)));
+  } catch {
+    return false;
+  }
+}
+async function getAuthToken(config, timeoutMs) {
+  const apiKey = getApiKey(config);
+  if (apiKey)
+    return apiKey;
+  if (loadCredentialData()?.type !== "oauth")
+    throw authRequired();
+  return getAccessToken(getOAuthConfig(getApiBaseUrl(config), getMcpUrl(config)), timeoutMs);
 }
 
 // src/mcp-proxy.ts
-var MCP_URL = process.env.SUPERMEMORY_MCP_URL || "https://mcp.supermemory.ai/mcp";
 var REQUEST_TIMEOUT_MS = 30000;
 var sessionId = null;
 function send(message) {
@@ -221,7 +615,7 @@ function emitSseData(body, write) {
     }
   }
 }
-async function forward(message, apiKey) {
+async function forward(message, apiKey, mcpUrl) {
   const headers = {
     Authorization: `Bearer ${apiKey}`,
     "Content-Type": "application/json",
@@ -229,7 +623,7 @@ async function forward(message, apiKey) {
   };
   if (sessionId)
     headers["Mcp-Session-Id"] = sessionId;
-  const response = await fetch(MCP_URL, {
+  const response = await fetch(mcpUrl, {
     method: "POST",
     headers,
     body: JSON.stringify(message),
@@ -255,8 +649,12 @@ async function forward(message, apiKey) {
 `);
   }
 }
+function proxyTarget(config) {
+  if (getApiKey(config))
+    return process.env.SUPERMEMORY_MCP_URL || DEFAULT_MCP_URL;
+  return getMcpUrl(config);
+}
 function startMcpProxy() {
-  const apiKey = getApiKey(loadConfig());
   let queue = Promise.resolve();
   const lines = createInterface({ input: process.stdin });
   lines.on("line", (line) => {
@@ -269,25 +667,28 @@ function startMcpProxy() {
       return;
     }
     queue = queue.then(async () => {
-      if (!apiKey) {
-        sendError(message.id, -32001, "Supermemory is not authenticated. Run `cursor-supermemory login`, or set SUPERMEMORY_API_KEY.");
-        return;
-      }
       try {
-        await forward(message, apiKey);
+        const config = loadConfig();
+        const apiKey = await getAuthToken(config);
+        await forward(message, apiKey, proxyTarget(config));
       } catch (error) {
+        if (isAuthRequired(error)) {
+          sessionId = null;
+          sendError(message.id, -32001, "Supermemory is not authenticated. Run `cursor-supermemory login`, or set SUPERMEMORY_API_KEY.");
+          return;
+        }
         const detail = error instanceof Error ? error.message : String(error);
         sendError(message.id, -32000, `Supermemory MCP proxy error: ${detail}`);
       }
     });
   });
   lines.on("close", () => {
-    queue.finally(() => process.exit(0));
+    queue.finally(() => settleAuth().finally(() => process.exit(0)));
   });
 }
 
 // src/hook-api.ts
-import { createHash, createHmac } from "node:crypto";
+import { createHash as createHash2, createHmac } from "node:crypto";
 
 // node_modules/supermemory/dist/esm/generated/core/auth/AuthProvider.js
 function isAuthProvider(value) {
@@ -2082,10 +2483,10 @@ class ConnectorsClient {
     return HttpResponsePromise.fromPromise(this.__listAll(request, requestOptions));
   }
   async __listAll(request = {}, requestOptions) {
-    const { provider, page, limit } = request;
+    const { provider, page: page2, limit } = request;
     const _queryParams = {
       provider: provider != null ? provider : undefined,
-      page,
+      page: page2,
       limit
     };
     const _authRequest = await this._options.authProvider.getAuthRequest();
@@ -2131,10 +2532,10 @@ class ConnectorsClient {
     return HttpResponsePromise.fromPromise(this.__list(namespace, request, requestOptions));
   }
   async __list(namespace, request = {}, requestOptions) {
-    const { provider, page, limit } = request;
+    const { provider, page: page2, limit } = request;
     const _queryParams = {
       provider: provider != null ? provider : undefined,
-      page,
+      page: page2,
       limit
     };
     const _authRequest = await this._options.authProvider.getAuthRequest();
@@ -2994,9 +3395,9 @@ class NamespacesClient {
     return HttpResponsePromise.fromPromise(this.__list(request, requestOptions));
   }
   async __list(request = {}, requestOptions) {
-    const { page, limit } = request;
+    const { page: page2, limit } = request;
     const _queryParams = {
-      page,
+      page: page2,
       limit
     };
     const _authRequest = await this._options.authProvider.getAuthRequest();
@@ -3582,9 +3983,9 @@ class SupermemoryClient {
     return HttpResponsePromise.fromPromise(this.__list(namespace, type, request, requestOptions));
   }
   async __list(namespace, type, request = {}, requestOptions) {
-    const { page, limit, sort, order, ..._body } = request;
+    const { page: page2, limit, sort, order, ..._body } = request;
     const _queryParams = {
-      page,
+      page: page2,
       limit,
       sort: sort != null ? sort : undefined,
       order: order != null ? order : undefined
@@ -3678,7 +4079,6 @@ class Supermemory extends SupermemoryClient {
 }
 
 // src/hook-api.ts
-var DEFAULT_BASE_URL = "https://api.supermemory.ai";
 var REQUEST_TIMEOUT_MS2 = 3000;
 var INTEGRITY_VERSION = 1;
 var SEED = "7f2a9c4b8e1d6f3a5c0b9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a";
@@ -3690,16 +4090,20 @@ function resolveApiVersion(baseUrl, apiVersion) {
   }
   let url;
   try {
-    url = new URL(baseUrl || DEFAULT_BASE_URL);
+    url = new URL(baseUrl || DEFAULT_API_URL);
   } catch {
     throw new Error("Supermemory API base URL is invalid");
   }
-  return url.origin === DEFAULT_BASE_URL && /^\/*$/.test(url.pathname) && !url.username && !url.password && !url.search && !url.hash ? "v5" : "legacy";
+  return url.origin === DEFAULT_API_URL && /^\/*$/.test(url.pathname) && !url.username && !url.password && !url.search && !url.hash ? "v5" : "legacy";
 }
-function sdk(baseUrl, apiKey, tag) {
+function resolveAuth(auth2) {
+  return typeof auth2 === "function" ? auth2() : Promise.resolve(auth2);
+}
+async function sdk(baseUrl, auth2, tag) {
+  const apiKey = await resolveAuth(auth2);
   return new Supermemory({
     apiKey,
-    baseUrl: (baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, ""),
+    baseUrl: (baseUrl || DEFAULT_API_URL).replace(/\/+$/, ""),
     headers: headers(apiKey, tag),
     timeoutInSeconds: REQUEST_TIMEOUT_MS2 / 1000,
     maxRetries: 0
@@ -3714,7 +4118,7 @@ async function sdkRequest(request) {
   }
 }
 function sha256(input) {
-  return createHash("sha256").update(input).digest("hex");
+  return createHash2("sha256").update(input).digest("hex");
 }
 function headers(apiKey, containerTag) {
   const contentHash = sha256(containerTag);
@@ -3728,8 +4132,9 @@ function headers(apiKey, containerTag) {
     "x-sm-source": "cursor"
   };
 }
-async function post(baseUrl, apiKey, path3, containerTag, body) {
-  const response = await fetch(`${(baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, "")}${path3}`, {
+async function post(baseUrl, auth2, path3, containerTag, body) {
+  const apiKey = await resolveAuth(auth2);
+  const response = await fetch(`${(baseUrl || DEFAULT_API_URL).replace(/\/+$/, "")}${path3}`, {
     method: "POST",
     headers: headers(apiKey, containerTag),
     body: JSON.stringify(body),
@@ -3744,9 +4149,9 @@ async function post(baseUrl, apiKey, path3, containerTag, body) {
     throw new Error("Supermemory returned an invalid response");
   });
 }
-async function getProfile(baseUrl, apiKey, containerTag, query, scope, apiVersion) {
+async function getProfile(baseUrl, auth2, containerTag, query, scope, apiVersion) {
   if (resolveApiVersion(baseUrl, apiVersion) === "v5") {
-    const client = sdk(baseUrl, apiKey, containerTag);
+    const client = await sdk(baseUrl, auth2, containerTag);
     const options = {
       abortSignal: AbortSignal.timeout(REQUEST_TIMEOUT_MS2),
       maxRetries: 0
@@ -3754,11 +4159,11 @@ async function getProfile(baseUrl, apiKey, containerTag, query, scope, apiVersio
     const body = scope ? { filter: { field: "sm_scope", operator: "eq", value: scope } } : {};
     const [profile, searchResults] = await Promise.all([
       sdkRequest(client.profile(containerTag, body, options)),
-      query ? searchMemories(baseUrl, apiKey, containerTag, query, scope, "v5", options.abortSignal) : undefined
+      query ? searchMemories(baseUrl, auth2, containerTag, query, scope, "v5", options.abortSignal) : undefined
     ]);
     return { ...profile, ...searchResults ? { searchResults } : {} };
   }
-  return post(baseUrl, apiKey, "/v4/profile", containerTag, {
+  return post(baseUrl, auth2, "/v4/profile", containerTag, {
     containerTag,
     ...query ? { q: query } : {},
     ...scope ? {
@@ -3768,11 +4173,12 @@ async function getProfile(baseUrl, apiKey, containerTag, query, scope, apiVersio
     } : {}
   });
 }
-async function searchMemories(baseUrl, apiKey, containerTag, query, scope, apiVersion, abortSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS2)) {
+async function searchMemories(baseUrl, auth2, containerTag, query, scope, apiVersion, abortSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS2)) {
   if (resolveApiVersion(baseUrl, apiVersion) === "legacy") {
-    return getProfile(baseUrl, apiKey, containerTag, query, scope, "legacy");
+    return getProfile(baseUrl, auth2, containerTag, query, scope, "legacy");
   }
-  return sdkRequest(sdk(baseUrl, apiKey, containerTag).search(containerTag, {
+  const client = await sdk(baseUrl, auth2, containerTag);
+  return sdkRequest(client.search(containerTag, {
     query,
     searchMode: "memories",
     threshold: 0.55,
@@ -3791,7 +4197,7 @@ async function searchMemories(baseUrl, apiKey, containerTag, query, scope, apiVe
 
 // src/tags.ts
 import { execSync } from "node:child_process";
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 import {
   existsSync,
   readFileSync,
@@ -3806,7 +4212,7 @@ import {
   sep
 } from "node:path";
 function sha2562(input) {
-  return createHash2("sha256").update(input).digest("hex").slice(0, 16);
+  return createHash3("sha256").update(input).digest("hex").slice(0, 16);
 }
 function getGitRoot(directory) {
   const isolateWorktrees = process.env.SUPERMEMORY_ISOLATE_WORKTREES === "true";
@@ -3904,7 +4310,7 @@ function getGitRepoInfo(directory) {
     return result;
   }
 }
-function readJson2(filePath) {
+function readJson3(filePath) {
   try {
     if (!existsSync(filePath))
       return null;
@@ -4037,7 +4443,7 @@ function getLegacyCursorProjectTags(directory, config) {
 function getLegacyClaudeTags(directory) {
   const basePath = getProjectBasePath(directory);
   const projectHash = sha2562(basePath);
-  const config = readJson2(join2(basePath, ".claude", ".supermemory-claude", "config.json"));
+  const config = readJson3(join2(basePath, ".claude", ".supermemory-claude", "config.json"));
   return {
     personal: uniqueTags([
       stringValue(config?.personalContainerTag),
@@ -4052,7 +4458,7 @@ function getLegacyClaudeTags(directory) {
   };
 }
 function getLegacyCodexTags(directory) {
-  const config = readJson2(join2(homedir(), ".codex", "supermemory.json"));
+  const config = readJson3(join2(homedir(), ".codex", "supermemory.json"));
   const prefix = stringValue(config?.containerTagPrefix) || "codex";
   const userIdentity = getGitEmail(directory) || process.env.USER || process.env.USERNAME || hostname();
   const userHash = sha2562(userIdentity);
@@ -4161,68 +4567,72 @@ function writeGlobalMcpEntry(cliPath, configPath = GLOBAL_MCP_PATH) {
 
 // src/cli.ts
 var command = process.argv[2];
-switch (command) {
-  case "mcp":
-    startMcpProxy();
-    break;
-  case "mcp-install": {
-    const configPath = writeGlobalMcpEntry(fileURLToPath(import.meta.url));
-    console.log(`Registered the supermemory MCP server in ${configPath}.`);
-    console.log("Restart Cursor (or the cloud agent) to pick it up.");
-    break;
-  }
-  case "login": {
-    const existing = loadCredentials();
-    if (existing) {
-      console.log("Already authenticated. Use `logout` first to re-authenticate.");
-      process.exit(0);
-    }
-    console.log("Opening browser to authenticate...");
-    const result = await startAuthFlow();
-    if (result.success) {
-      console.log("Authenticated successfully.");
-    } else {
-      console.error(`Authentication failed: ${result.error}`);
-      process.exit(1);
-    }
-    break;
-  }
-  case "logout": {
-    const removed = clearCredentials();
-    console.log(removed ? "Logged out." : "No credentials found.");
-    break;
-  }
-  case "status": {
-    const config = loadConfig();
-    const apiKey = getApiKey(config);
-    if (!apiKey) {
-      console.log("Not authenticated. Run `cursor-supermemory login` to connect.");
+async function main() {
+  switch (command) {
+    case "mcp":
+      startMcpProxy();
+      break;
+    case "mcp-install": {
+      const configPath = writeGlobalMcpEntry(fileURLToPath(import.meta.url));
+      console.log(`Registered the supermemory MCP server in ${configPath}.`);
+      console.log("Restart Cursor (or the cloud agent) to pick it up.");
       break;
     }
-    const credentials = loadCredentials();
-    if (credentials?.createdAt) {
-      console.log(`Authenticated since ${credentials.createdAt}`);
+    case "login": {
+      const config = loadConfig();
+      console.log("Opening browser to authenticate...");
+      await startAuthFlow(getOAuthConfig(getApiBaseUrl(config), getMcpUrl(config)));
+      console.log("Authenticated successfully.");
+      if (getApiKey(config)) {
+        console.log("An environment/config API key still takes precedence. Remove it to use OAuth.");
+      }
+      break;
     }
-    console.log("API key is configured.");
-    try {
-      const tags = getResolvedTags(process.cwd(), config);
-      await getProfile(config.baseUrl, apiKey, tags.canonical, resolveApiVersion(config.baseUrl, config.apiVersion) === "legacy" ? "connectivity probe" : undefined, undefined, config.apiVersion);
-      console.log(`Connected to Supermemory (${tags.canonical}).`);
-    } catch (error) {
-      console.error(`Supermemory is unreachable: ${error instanceof Error ? error.message : String(error)}`);
-      process.exitCode = 1;
+    case "logout": {
+      const removed = await clearCredentials();
+      console.log(removed ? "Logged out." : "No credentials found.");
+      if (getApiKey(loadConfig())) {
+        console.log("An environment/config API key is still configured and has not been removed.");
+      }
+      break;
     }
-    break;
-  }
-  default:
-    console.log(`cursor-supermemory — Persistent AI memory for Cursor
+    case "status": {
+      const config = loadConfig();
+      const authType = getAuthType(config);
+      console.log(`Authentication: ${authType}`);
+      const credentials = loadCredentialData();
+      if (authType === "oauth" && credentials?.type === "oauth") {
+        console.log(`OAuth client: ${credentials.clientId}`);
+      }
+      if (!isConfigured(config)) {
+        console.log("Not authenticated. Run `cursor-supermemory login` to connect.");
+        break;
+      }
+      try {
+        const tags = getResolvedTags(process.cwd(), config);
+        await getProfile(config.baseUrl, () => getAuthToken(config), tags.canonical, resolveApiVersion(config.baseUrl, config.apiVersion) === "legacy" ? "connectivity probe" : undefined, undefined, config.apiVersion);
+        console.log(`Connected to Supermemory (${tags.canonical}).`);
+      } catch (error) {
+        console.error(`Supermemory is unreachable: ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 1;
+      }
+      break;
+    }
+    default:
+      console.log(`cursor-supermemory — Persistent AI memory for Cursor
 
 Commands:
   mcp          Proxy the hosted Supermemory MCP server over stdio
   mcp-install  Register the MCP server in ~/.cursor/mcp.json with an absolute path
   login        Authenticate with Supermemory
-  logout       Remove stored credentials
+  logout       Revoke and remove stored credentials
   status       Show authentication status`);
-    if (command)
-      process.exit(1);
+      if (command)
+        process.exitCode = 1;
+  }
 }
+main().catch(async (error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  await settleAuth();
+  process.exit(1);
+});

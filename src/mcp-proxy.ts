@@ -1,8 +1,13 @@
 import { createInterface } from "node:readline";
-import { getApiKey, loadConfig } from "./config.ts";
+import {
+  DEFAULT_MCP_URL,
+  getApiKey,
+  getAuthToken,
+  getMcpUrl,
+  loadConfig,
+} from "./config.ts";
+import { isAuthRequired, settleAuth } from "./auth.ts";
 
-const MCP_URL =
-  process.env.SUPERMEMORY_MCP_URL || "https://mcp.supermemory.ai/mcp";
 const REQUEST_TIMEOUT_MS = 30_000;
 
 let sessionId: string | null = null;
@@ -38,7 +43,11 @@ export function emitSseData(
   }
 }
 
-async function forward(message: JsonRpcMessage, apiKey: string): Promise<void> {
+async function forward(
+  message: JsonRpcMessage,
+  apiKey: string,
+  mcpUrl: string,
+): Promise<void> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
     "Content-Type": "application/json",
@@ -46,7 +55,7 @@ async function forward(message: JsonRpcMessage, apiKey: string): Promise<void> {
   };
   if (sessionId) headers["Mcp-Session-Id"] = sessionId;
 
-  const response = await fetch(MCP_URL, {
+  const response = await fetch(mcpUrl, {
     method: "POST",
     headers,
     body: JSON.stringify(message),
@@ -77,8 +86,13 @@ async function forward(message: JsonRpcMessage, apiKey: string): Promise<void> {
   }
 }
 
+// API keys keep the hosted MCP default; an OAuth token is only valid for its resource.
+function proxyTarget(config: ReturnType<typeof loadConfig>): string {
+  if (getApiKey(config)) return process.env.SUPERMEMORY_MCP_URL || DEFAULT_MCP_URL;
+  return getMcpUrl(config);
+}
+
 export function startMcpProxy(): void {
-  const apiKey = getApiKey(loadConfig());
   let queue = Promise.resolve();
   const lines = createInterface({ input: process.stdin });
 
@@ -93,18 +107,21 @@ export function startMcpProxy(): void {
     }
 
     queue = queue.then(async () => {
-      if (!apiKey) {
-        sendError(
-          message.id,
-          -32001,
-          "Supermemory is not authenticated. Run `cursor-supermemory login`, or set SUPERMEMORY_API_KEY.",
-        );
-        return;
-      }
-
       try {
-        await forward(message, apiKey);
+        // Resolve per message: login or a token refresh may land after the proxy started.
+        const config = loadConfig();
+        const apiKey = await getAuthToken(config);
+        await forward(message, apiKey, proxyTarget(config));
       } catch (error) {
+        if (isAuthRequired(error)) {
+          sessionId = null;
+          sendError(
+            message.id,
+            -32001,
+            "Supermemory is not authenticated. Run `cursor-supermemory login`, or set SUPERMEMORY_API_KEY.",
+          );
+          return;
+        }
         const detail = error instanceof Error ? error.message : String(error);
         sendError(message.id, -32000, `Supermemory MCP proxy error: ${detail}`);
       }
@@ -112,6 +129,7 @@ export function startMcpProxy(): void {
   });
 
   lines.on("close", () => {
-    queue.finally(() => process.exit(0));
+    // Let a refresh that is still rotating tokens save them before exiting.
+    queue.finally(() => settleAuth().finally(() => process.exit(0)));
   });
 }
