@@ -47,6 +47,17 @@ test("starts the cli from a Grok install, where CURSOR_PLUGIN_ROOT never exists"
   expect(res.exitCode).toBe(0);
 });
 
+test("starts the cli from Grok Bot's marketplace cache", () => {
+  const { home } = install(
+    ["sand-data", "plugins", "cache", "cursor-public", "cursor-supermemory", "83c59685fc15"],
+    "GROKBOT",
+  );
+  const res = runLauncher(home, { CURSOR_PLUGIN_ROOT: "", CLAUDE_PLUGIN_ROOT: "", GROK_PLUGIN_ROOT: "" });
+
+  expect(res.stdout.toString()).toContain("GROKBOT:cli.js:mcp");
+  expect(res.exitCode).toBe(0);
+});
+
 test("prefers the plugin root a host expanded into the argument", () => {
   const { home, root } = install(["somewhere", "else"], "ARGV");
   const res = runLauncher(home, { CURSOR_PLUGIN_ROOT: "", CLAUDE_PLUGIN_ROOT: "" }, root);
