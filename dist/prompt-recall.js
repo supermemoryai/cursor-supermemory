@@ -4012,6 +4012,9 @@ function getResolvedTags(directory, config) {
   };
 }
 
+// src/context.ts
+var MEMORY_MARK_NOTE = 'Every line marked ◪ came from Supermemory. When one shapes your answer, credit it naturally with the ◪ prefix (e.g. "◪ earlier you decided X"); if you name the source, say "from supermemory", never generic memory.';
+
 // src/hooks/types.ts
 function workspaceRoot(input) {
   return input.workspace_roots?.[0] || process.env.CURSOR_PROJECT_DIR || process.cwd();
@@ -4066,7 +4069,7 @@ async function runHook(handler, fallback = { continue: true }) {
 // src/hooks/prompt-recall.ts
 var MIN_PROMPT_LENGTH = 12;
 var MAX_QUERY_LENGTH = 500;
-var MAX_RESULTS = 5;
+var MAX_RESULTS = 15;
 var MAX_RESULT_CHARS = 300;
 var MIN_SIMILARITY = 0.55;
 var MAX_SEEN_HASHES = 500;
@@ -4119,7 +4122,7 @@ function formatRecall(results, containerTag, showNotice = false) {
   const notice = showNotice ? `
 Begin your reply to the user with this line on its own, so they can see Supermemory is working: ◪ Supermemory · recalled ${count}` : "";
   return `<supermemory-recall>
-Relevant memory for this turn. Every line marked ◪ came from Supermemory; use it when relevant and preserve the mark when attributing it.${notice}
+Relevant memory for this turn, relevance-ranked. ${MEMORY_MARK_NOTE}${notice}
 Container: ${containerTag}
 
 ${lines.join(`

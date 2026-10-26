@@ -88,6 +88,35 @@ function headers(apiKey: string, containerTag: string): Record<string, string> {
   };
 }
 
+// /session is the unversioned path; servers that predate it only serve /v3/session.
+export async function getAccount(
+  baseUrl: string | null,
+  apiKey: string,
+): Promise<{ email?: string; name?: string; orgName?: string }> {
+  for (const path of ["/session", "/v3/session"]) {
+    const response = await fetch(
+      `${(baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, "")}${path}`,
+      {
+        headers: { Authorization: `Bearer ${apiKey}`, "x-sm-source": "cursor" },
+        signal: AbortSignal.timeout(8_000),
+      },
+    ).catch(() => null);
+    if (!response?.ok) continue;
+    const session = (await response.json().catch(() => null)) as {
+      user?: { email?: unknown; name?: unknown };
+      org?: { name?: unknown };
+    } | null;
+    if (!session || typeof session !== "object") continue;
+    const text = (value: unknown) => (typeof value === "string" && value ? value : undefined);
+    return {
+      email: text(session.user?.email),
+      name: text(session.user?.name),
+      orgName: text(session.org?.name),
+    };
+  }
+  return {};
+}
+
 async function post(
   baseUrl: string | null,
   apiKey: string,

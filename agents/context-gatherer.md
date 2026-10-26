@@ -16,4 +16,4 @@ Return a brief under 300 words with only retrieved facts:
 - **Conventions and preferences** — include standing decisions the work must respect.
 - **Open threads** — include unfinished work adjacent to the task.
 
-Omit empty sections. If no useful memory exists, say so in one line. Never invent a claim.
+Start each retrieved fact with ◪ so the caller can credit Supermemory. Omit empty sections. If no useful memory exists, say so in one line. Never invent a claim.

@@ -21,6 +21,9 @@ test("approves hosted Supermemory tools under any server prefix", () => {
   expect(permissionFor("MCP: supermemory/add_memory")).toContain("allow");
   expect(permissionFor("search_memory")).toContain("allow");
   expect(permissionFor("listSpaces")).toContain("allow");
+  expect(permissionFor("get_profile")).toContain("allow");
+  expect(permissionFor("list_memories")).toContain("allow");
+  expect(permissionFor("who_am_i")).toContain("allow");
 });
 
 test("stays out of the way for unrelated tools and unprefixed writes", () => {

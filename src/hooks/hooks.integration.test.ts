@@ -64,6 +64,29 @@ async function runHook(file: string, input: Record<string, unknown>) {
 }
 
 describe("Cursor hook integration", () => {
+  test("an unconnected session starts a sign-in and says how to finish it", async () => {
+    const port = 20_000 + Math.floor(Math.random() * 20_000);
+    const child = Bun.spawn([Bun.which("node") ?? "node", join(root, "dist/session-start.js")], {
+      cwd: workspace,
+      env: {
+        ...Bun.env,
+        HOME: join(home, "fresh"),
+        USERPROFILE: join(home, "fresh"),
+        SUPERMEMORY_API_KEY: "",
+        SUPERMEMORY_AUTH_PORT: String(port),
+        SUPERMEMORY_AUTH_TIMEOUT: "3000",
+        PATH: "/nonexistent",
+      },
+      stdin: "pipe",
+      stdout: "pipe",
+    });
+    child.stdin.write(JSON.stringify({ session_id: "s", workspace_roots: [workspace] }));
+    child.stdin.end();
+    const output = JSON.parse(await new Response(child.stdout).text());
+    expect(output.additional_context).toContain("memory-connect");
+    expect(await (await fetch(`http://127.0.0.1:${port}/pending`)).text()).toBe("supermemory-login");
+  });
+
   test("recalls before a prompt and injects after the first tool", async () => {
     const input = {
       conversation_id: "conversation-recall",

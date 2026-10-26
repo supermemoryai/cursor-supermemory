@@ -35,7 +35,8 @@ The published npm **1.0.0** package is a different, older product with a local M
 
 - **Session context** — loads your persistent profile when a Cursor conversation starts
 - **Automatic recall** — searches on substantive prompts, deduplicates results, and injects them after the first tool result supported by Cursor. The agent opens its reply with `◪ Supermemory · recalled N memories`, since Cursor-format hosts have no other notice surface
-- **Incremental capture** — saves each completed turn and retries unsaved transcript deltas at session end
+- **Incremental capture** — saves each completed turn and retries unsaved transcript deltas at session end. Credential-shaped values and anything in `<private>…</private>` are redacted before upload; the filter cannot catch every secret
+- **Browser sign-in** — a session without a key opens the sign-in once, like Claude Code and Codex
 - **MCP tools** — the hosted Supermemory tools, proxied over stdio for explicit memory control
 - **Context gatherer** — fans out targeted searches before substantial work
 - **Always-on rule** — makes the agent recall relevant history proactively
@@ -67,7 +68,12 @@ Pass `containerTag` on every call, using the tag from the
 `<supermemory-context>` block the session-start hook injects. Without it the
 hosted server writes to the account's active space, and this project's hook
 recall will not find the memory. The bundled rule, skills, and context-gatherer
-agent all carry that instruction.
+agent all carry that instruction, and the proxy fills in this repository's
+namespace when a space-scoped call omits one, as Claude Code's proxy does.
+
+The proxy also marks every memory in `search_memory`, `get_profile` and
+`list_memories` results with ◪, the Supermemory mark, and tells the agent to
+credit it the same way it credits hook recall.
 
 Config lives in files rather than tools: see [Configuration](#configuration) or
 run the `/supermemory-config` command.
@@ -157,7 +163,7 @@ Create or edit the config file directly, or run the `/supermemory-config` comman
 
 The hosted API root (`https://api.supermemory.ai`, including equivalent case/default-port/trailing-slash spellings) defaults to v5. Custom URLs keep the v3/v4 REST contract by default, including their path prefix and bearer key, so older self-hosted servers below 0.0.9 remain usable. After upgrading your custom server, opt into v5 with `"apiVersion": "v5"` or `SUPERMEMORY_API_VERSION=v5`. An explicit `legacy` also supports hosted rollback if that server still serves v3/v4. Invalid versions fail the memory operation; there is no failed-write version probing or fallback to the hosted API.
 
-Recall explicitly uses memories search, threshold `0.55`, ten candidates per namespace, no reranking or query rewriting. The existing local configured threshold floor, five-result cap, excerpts and session dedup remain. Session context uses query-free profiles and renders both old string facts and v5 object facts. Reads and capture retain the three-second request budget and zero automatic transport retries. Capture keeps its generation IDs and POST append/diff semantics, advancing its cursor only on valid document acceptance; acceptance is not completed processing or exactly-once billing. Dynamic processing is retained and can delay newly recallable facts by minutes; no billable instant processing is enabled.
+Recall explicitly uses memories search, threshold `0.55`, ten candidates per namespace, no reranking or query rewriting. The existing local configured threshold floor, excerpts and session dedup remain, with up to fifteen results per turn. Session context uses query-free profiles and renders both old string facts and v5 object facts. Reads and capture retain the three-second request budget and zero automatic transport retries. Capture keeps its generation IDs and POST append/diff semantics, advancing its cursor only on valid document acceptance; acceptance is not completed processing or exactly-once billing. Dynamic processing is retained and can delay newly recallable facts by minutes; no billable instant processing is enabled.
 
 These are client contract guarantees, not a live-backend historical-data/ranking parity claim. No namespace move, merge, deletion or backfill is performed. Hosted MCP tool schemas and approvals remain unchanged because MCP is a separate protocol.
 

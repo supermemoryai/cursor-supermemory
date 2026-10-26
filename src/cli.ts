@@ -12,7 +12,7 @@ import {
   waitForCredentials,
 } from "./auth.ts";
 import { loadConfig, getApiKey } from "./config.ts";
-import { getProfile, resolveApiVersion } from "./hook-api.ts";
+import { getAccount, getProfile, resolveApiVersion } from "./hook-api.ts";
 import { getResolvedTags } from "./tags.ts";
 import { writeGlobalMcpEntry } from "./mcp-install.ts";
 
@@ -119,6 +119,11 @@ switch (command) {
         config.apiVersion,
       );
       console.log(`Connected to Supermemory (${tags.canonical}).`);
+      const account = await getAccount(config.baseUrl, apiKey);
+      const who = account.email ?? account.name;
+      if (who) {
+        console.log(`Account: ${who}${account.orgName ? ` (${account.orgName})` : ""}`);
+      }
     } catch (error) {
       console.error(
         `Supermemory is unreachable: ${error instanceof Error ? error.message : String(error)}`,

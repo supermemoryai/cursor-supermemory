@@ -3,6 +3,7 @@ import { loadConfig, getApiKey } from "../config.ts";
 import { getSearches } from "../hook-api.ts";
 import { readHookState, writeHookState } from "../hook-state.ts";
 import { getResolvedTags } from "../tags.ts";
+import { MEMORY_MARK_NOTE } from "../context.ts";
 import {
   conversationId,
   type CursorHookInput,
@@ -12,7 +13,7 @@ import { isMainModule, runHook } from "../runtime.ts";
 
 const MIN_PROMPT_LENGTH = 12;
 const MAX_QUERY_LENGTH = 500;
-const MAX_RESULTS = 5;
+const MAX_RESULTS = 15;
 const MAX_RESULT_CHARS = 300;
 const MIN_SIMILARITY = 0.55;
 const MAX_SEEN_HASHES = 500;
@@ -99,7 +100,7 @@ export function formatRecall(
     ? `\nBegin your reply to the user with this line on its own, so they can see Supermemory is working: ◪ Supermemory · recalled ${count}`
     : "";
   return `<supermemory-recall>
-Relevant memory for this turn. Every line marked ◪ came from Supermemory; use it when relevant and preserve the mark when attributing it.${notice}
+Relevant memory for this turn, relevance-ranked. ${MEMORY_MARK_NOTE}${notice}
 Container: ${containerTag}
 
 ${lines.join("\n")}

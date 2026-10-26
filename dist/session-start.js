@@ -18,20 +18,26 @@ var __require = /* @__PURE__ */ createRequire(import.meta.url);
 // src/hooks/session-start.ts
 import path3 from "node:path";
 
-// src/config.ts
-import path2 from "node:path";
-import os2 from "node:os";
-import fs2 from "node:fs";
-
 // src/auth.ts
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { spawn } from "node:child_process";
+// package.json
+var version = "1.2.3";
+
+// src/auth.ts
 var AUTH_PORT = Number(process.env.SUPERMEMORY_AUTH_PORT) || 19878;
 var CALLBACK_URL = `http://localhost:${AUTH_PORT}/callback`;
+var PENDING_MARKER = "supermemory-login";
 var AUTH_URL = process.env.SUPERMEMORY_AUTH_URL || "https://console.supermemory.ai/auth/connect";
 var configuredTimeout = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT);
 var LISTEN_TIMEOUT_MS = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 10 * 60000;
+var CLIENTS = {
+  cursor: { id: "cursor", name: "Cursor" },
+  grok_bot: { id: "grok_bot", name: "Grok Bot" }
+};
+var GROK_ENV = ["GROK_PLUGIN_ROOT", "GROK_SESSION_ID", "GROK_HOOK_EVENT", "GROK_WORKSPACE_ROOT"];
 function credentialsDir() {
   return path.join(os.homedir(), ".supermemory-cursor");
 }
@@ -51,8 +57,70 @@ function loadCredentials() {
     return null;
   }
 }
+function detectClient(requested, env = process.env, entry = process.argv[1] ?? "") {
+  const key = requested?.trim().toLowerCase().replace(/[\s-]/g, "_");
+  if (key === "grok" || key === "grok_bot" || key === "grokbot")
+    return CLIENTS.grok_bot;
+  if (key === "cursor")
+    return CLIENTS.cursor;
+  const grokEnv = GROK_ENV.some((name) => !!env[name] && !env[name].includes("${"));
+  const grokInstall = entry.split(/[\\/]/).includes(".grok");
+  return grokEnv || grokInstall ? CLIENTS.grok_bot : CLIENTS.cursor;
+}
+function buildAuthUrl(client, cwd = process.cwd()) {
+  const url = new URL(AUTH_URL);
+  url.search = new URLSearchParams({
+    callback: `${CALLBACK_URL}?client=${client.id}`,
+    client: client.id,
+    hostname: `${client.name} - ${os.hostname()}`,
+    os: `${os.platform()} ${os.release()}`,
+    cwd,
+    cli_version: version
+  }).toString();
+  return url.toString();
+}
+function openBrowser(url) {
+  const platform = process.platform;
+  const command = platform === "win32" ? "cmd" : platform === "darwin" ? "open" : "xdg-open";
+  const args = platform === "win32" ? ["/c", "start", "", url] : [url];
+  spawn(command, args, { stdio: "ignore", detached: true }).on("error", () => {}).unref();
+}
+async function probeListener() {
+  try {
+    const response = await fetch(`http://127.0.0.1:${AUTH_PORT}/pending`, {
+      signal: AbortSignal.timeout(1000)
+    });
+    return await response.text() === PENDING_MARKER ? "ours" : "other";
+  } catch {
+    return "free";
+  }
+}
+async function beginLogin(client, cliPath, { reopen = true } = {}) {
+  const url = buildAuthUrl(client);
+  let state = await probeListener();
+  const started = state === "free";
+  if (started) {
+    spawn(process.execPath, [cliPath, "login-listen", "--client", client.id], {
+      detached: true,
+      stdio: "ignore"
+    }).unref();
+    for (let i = 0;i < 25 && state !== "ours"; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      state = await probeListener();
+    }
+  }
+  if (state !== "ours") {
+    return { url, error: `Could not open the sign-in callback on port ${AUTH_PORT}` };
+  }
+  if (started || reopen)
+    openBrowser(url);
+  return { url };
+}
 
 // src/config.ts
+import path2 from "node:path";
+import os2 from "node:os";
+import fs2 from "node:fs";
 var GLOBAL_CONFIG_PATH = path2.join(os2.homedir(), ".config", "cursor", "supermemory.json");
 var DEFAULTS = {
   baseUrl: null,
@@ -3979,6 +4047,7 @@ async function readNamespaces(tags, read) {
 }
 
 // src/context.ts
+var MEMORY_MARK_NOTE = 'Every line marked ◪ came from Supermemory. When one shapes your answer, credit it naturally with the ◪ prefix (e.g. "◪ earlier you decided X"); if you name the source, say "from supermemory", never generic memory.';
 function formatContainerDirective(containerTag) {
   return `This project's memory container: ${containerTag}. Pass \`containerTag: "${containerTag}"\` on every Supermemory MCP call (search_memory, add_memory, listMemories) so tool memories and session recall stay in the same space.`;
 }
@@ -4003,7 +4072,7 @@ ${dynamics.map((fact) => `- ◪ ${fact}`).join(`
 `)}`);
   }
   return `<supermemory-context>
-Recalled memory for this project (${projectName}). Every line marked ◪ comes from Supermemory. Preserve the mark when citing one, and call the source “Supermemory,” never generic memory.
+Recalled memory for this project (${projectName}). ${MEMORY_MARK_NOTE}
 ${formatContainerDirective(containerTag)}
 
 ${sections.join(`
@@ -4035,8 +4104,11 @@ async function main() {
   const apiKey = getApiKey(config);
   if (!apiKey) {
     const cli = path3.join(path3.dirname(process.argv[1] ?? "dist/session-start.js"), "cli.js");
+    await beginLogin(detectClient(), cli, { reopen: false }).catch(() => {
+      return;
+    });
     process.stdout.write(JSON.stringify({
-      additional_context: `<supermemory-status>Supermemory is not connected. When the user wants memory, follow the memory-connect skill: run \`node "${cli}" login --no-wait\` and open the URL it prints in a browser on this same machine.</supermemory-status>`
+      additional_context: `<supermemory-status>Supermemory is not connected, so persistent memory is off. When the user wants memory, follow the memory-connect skill: run \`node "${cli}" login --no-wait\` and open the URL it prints in a browser on this same machine.</supermemory-status>`
     }));
     return;
   }

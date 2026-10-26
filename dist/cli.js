@@ -19,6 +19,8 @@ var __require = /* @__PURE__ */ createRequire(import.meta.url);
 import { fileURLToPath } from "node:url";
 
 // src/mcp-proxy.ts
+import os3 from "node:os";
+import path3 from "node:path";
 import { createInterface } from "node:readline";
 
 // src/config.ts
@@ -103,7 +105,7 @@ function detectClient(requested, env = process.env, entry = process.argv[1] ?? "
 function buildAuthUrl(client, cwd = process.cwd()) {
   const url = new URL(AUTH_URL);
   url.search = new URLSearchParams({
-    callback: CALLBACK_URL,
+    callback: `${CALLBACK_URL}?client=${client.id}`,
     client: client.id,
     hostname: `${client.name} - ${os.hostname()}`,
     os: `${os.platform()} ${os.release()}`,
@@ -174,8 +176,9 @@ function listenForCallback(client, timeoutMs = LISTEN_TIMEOUT_MS) {
         return;
       }
       saveCredentials(apiKey);
+      const named = url.searchParams.get("client") ? detectClient(url.searchParams.get("client")) : client;
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(page(`Connected to ${client.name}!`, "Supermemory is ready. You can close this tab."), () => finish({ success: true, apiKey }));
+      res.end(page(`Connected to ${named.name}!`, "Supermemory is ready. You can close this tab."), () => finish({ success: true, apiKey }));
     });
     server.on("error", (error) => {
       const detail = error.code === "EADDRINUSE" ? `Port ${AUTH_PORT} is already in use` : error.message;
@@ -187,10 +190,11 @@ function listenForCallback(client, timeoutMs = LISTEN_TIMEOUT_MS) {
     }, timeoutMs);
   });
 }
-async function beginLogin(client, cliPath) {
+async function beginLogin(client, cliPath, { reopen = true } = {}) {
   const url = buildAuthUrl(client);
   let state = await probeListener();
-  if (state === "free") {
+  const started = state === "free";
+  if (started) {
     spawn(process.execPath, [cliPath, "login-listen", "--client", client.id], {
       detached: true,
       stdio: "ignore"
@@ -203,7 +207,8 @@ async function beginLogin(client, cliPath) {
   if (state !== "ours") {
     return { url, error: `Could not open the sign-in callback on port ${AUTH_PORT}` };
   }
-  openBrowser(url);
+  if (started || reopen)
+    openBrowser(url);
   return { url };
 }
 async function waitForCredentials(timeoutMs = LISTEN_TIMEOUT_MS) {
@@ -285,10 +290,463 @@ function getApiKey(config) {
   return creds?.apiKey ?? null;
 }
 
+// src/context.ts
+var MEMORY_MARK_NOTE = 'Every line marked ◪ came from Supermemory. When one shapes your answer, credit it naturally with the ◪ prefix (e.g. "◪ earlier you decided X"); if you name the source, say "from supermemory", never generic memory.';
+
+// src/tags.ts
+import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  readFileSync,
+  realpathSync
+} from "node:fs";
+import { hostname, homedir, userInfo } from "node:os";
+import {
+  basename,
+  dirname,
+  join,
+  resolve,
+  sep
+} from "node:path";
+function sha256(input) {
+  return createHash("sha256").update(input).digest("hex").slice(0, 16);
+}
+function getGitRoot(directory) {
+  const isolateWorktrees = process.env.SUPERMEMORY_ISOLATE_WORKTREES === "true";
+  try {
+    if (isolateWorktrees) {
+      return execSync("git rev-parse --show-toplevel", {
+        cwd: directory,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"]
+      }).trim() || null;
+    }
+    const gitCommonDir = execSync("git rev-parse --git-common-dir", {
+      cwd: directory,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"]
+    }).trim();
+    if (gitCommonDir === ".git") {
+      return execSync("git rev-parse --show-toplevel", {
+        cwd: directory,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"]
+      }).trim() || null;
+    }
+    const resolvedCommonDir = resolve(directory, gitCommonDir);
+    if (basename(resolvedCommonDir) === ".git" && !resolvedCommonDir.includes(`${sep}.git${sep}`)) {
+      return dirname(resolvedCommonDir);
+    }
+    return execSync("git rev-parse --show-toplevel", {
+      cwd: directory,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"]
+    }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+function getProjectBasePath(directory) {
+  return getGitRoot(directory) || resolve(directory);
+}
+function getGitEmail(directory) {
+  try {
+    return execSync("git config user.email", {
+      cwd: getProjectBasePath(directory),
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"]
+    }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+function getMachineId() {
+  return `${hostname()}_${userInfo().username}`;
+}
+function normalizeGitRemote(remoteUrl) {
+  const raw = remoteUrl.trim();
+  if (!raw)
+    return null;
+  let normalized;
+  if (/^[a-z][a-z\d+.-]*:\/\//i.test(raw)) {
+    try {
+      const parsed = new URL(raw);
+      normalized = parsed.protocol === "file:" ? `file:${decodeURIComponent(parsed.pathname)}` : `${parsed.hostname.toLowerCase()}${parsed.port ? `:${parsed.port}` : ""}/${parsed.pathname.replace(/^\/+/, "")}`;
+    } catch {
+      normalized = raw;
+    }
+  } else {
+    const scpStyle = raw.match(/^(?:[^@/]+@)?([^:]+):(.+)$/);
+    normalized = scpStyle ? `${scpStyle[1].toLowerCase()}/${scpStyle[2]}` : `file:${resolve(raw)}`;
+  }
+  return normalized.replace(/[?#].*$/, "").replace(/\/+$/, "").replace(/\.git$/i, "").replace(/\/{2,}/g, "/").toLowerCase();
+}
+var repoInfoCache = new Map;
+function getGitRepoInfo(directory) {
+  const cached = repoInfoCache.get(directory);
+  if (cached)
+    return cached;
+  try {
+    const remoteUrl = execSync("git remote get-url origin", {
+      cwd: directory,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"]
+    }).trim();
+    const normalizedRemote = normalizeGitRemote(remoteUrl);
+    const displayRemote = remoteUrl.replace(/\/+$/, "").replace(/\.git$/i, "");
+    const separator = Math.max(displayRemote.lastIndexOf("/"), displayRemote.lastIndexOf(":"));
+    const result = {
+      name: displayRemote.slice(separator + 1) || null,
+      normalizedRemote
+    };
+    repoInfoCache.set(directory, result);
+    return result;
+  } catch {
+    const result = { name: null, normalizedRemote: null };
+    repoInfoCache.set(directory, result);
+    return result;
+  }
+}
+function readJson2(filePath) {
+  try {
+    if (!existsSync(filePath))
+      return null;
+    return JSON.parse(readFileSync(filePath, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+function stripJsoncComments(content) {
+  let result = "";
+  let index = 0;
+  let inString = false;
+  let singleLineComment = false;
+  let multiLineComment = false;
+  while (index < content.length) {
+    const char = content[index];
+    const next = content[index + 1];
+    if (!singleLineComment && !multiLineComment && char === '"') {
+      let backslashes = 0;
+      for (let cursor = index - 1;cursor >= 0 && content[cursor] === "\\"; cursor--) {
+        backslashes++;
+      }
+      if (backslashes % 2 === 0)
+        inString = !inString;
+      result += char;
+      index++;
+      continue;
+    }
+    if (inString) {
+      result += char;
+      index++;
+      continue;
+    }
+    if (!singleLineComment && !multiLineComment && char === "/" && next === "/") {
+      singleLineComment = true;
+      index += 2;
+      continue;
+    }
+    if (!singleLineComment && !multiLineComment && char === "/" && next === "*") {
+      multiLineComment = true;
+      index += 2;
+      continue;
+    }
+    if (singleLineComment) {
+      if (char === `
+`) {
+        singleLineComment = false;
+        result += char;
+      }
+      index++;
+      continue;
+    }
+    if (multiLineComment) {
+      if (char === "*" && next === "/") {
+        multiLineComment = false;
+        index += 2;
+        continue;
+      }
+      if (char === `
+`)
+        result += char;
+      index++;
+      continue;
+    }
+    result += char;
+    index++;
+  }
+  return result.replace(/,\s*([}\]])/g, "$1");
+}
+function loadOpenCodeConfig() {
+  const configDir = join(homedir(), ".config", "opencode");
+  for (const filename of ["supermemory.jsonc", "supermemory.json"]) {
+    try {
+      const configPath = join(configDir, filename);
+      if (!existsSync(configPath))
+        continue;
+      return JSON.parse(stripJsoncComments(readFileSync(configPath, "utf-8")));
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+function stringValue(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+function uniqueTags(tags) {
+  return [
+    ...new Set(tags.filter((tag) => typeof tag === "string" && tag.trim().length > 0))
+  ];
+}
+function sanitizeRepoName(name) {
+  const sanitized = name.toLowerCase().replace(/[^a-z0-9]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
+  return sanitized.slice(0, 95).replace(/_+$/g, "") || "unknown";
+}
+function getProjectIdentity(directory) {
+  const basePath = getProjectBasePath(directory);
+  const { normalizedRemote } = getGitRepoInfo(basePath);
+  const isolateWorktrees = process.env.SUPERMEMORY_ISOLATE_WORKTREES === "true";
+  let localIdentity = basePath;
+  try {
+    localIdentity = realpathSync.native(basePath);
+  } catch {}
+  return sha256(!isolateWorktrees && normalizedRemote ? normalizedRemote : `path:${localIdentity}`);
+}
+function getProjectName(directory) {
+  const basePath = getProjectBasePath(directory);
+  return getGitRepoInfo(basePath).name || basename(basePath) || "unknown";
+}
+function getGeneratedRepoTag(directory) {
+  const name = sanitizeRepoName(getProjectName(directory)).slice(0, 72).replace(/_+$/g, "");
+  return `repo_${name || "unknown"}__${getProjectIdentity(directory)}`;
+}
+function getLegacyRepoTag(directory) {
+  return `repo_${sanitizeRepoName(getProjectName(directory))}`;
+}
+function getLegacyCursorUserTags(directory, config) {
+  const identities = uniqueTags([
+    config.userContainerTag || process.env.SUPERMEMORY_USER_TAG || process.env.CURSOR_USER_EMAIL || getGitEmail(directory) || getMachineId()
+  ]);
+  return identities.map((identity) => `cursor_user_${sha256(identity)}`);
+}
+function getLegacyCursorProjectTags(directory, config) {
+  const basePath = getProjectBasePath(directory);
+  const identities = uniqueTags([
+    config.projectContainerTag || process.env.SUPERMEMORY_PROJECT_TAG || basePath
+  ]);
+  return identities.map((identity) => `cursor_project_${sha256(identity)}`);
+}
+function getLegacyClaudeTags(directory) {
+  const basePath = getProjectBasePath(directory);
+  const projectHash = sha256(basePath);
+  const config = readJson2(join(basePath, ".claude", ".supermemory-claude", "config.json"));
+  return {
+    personal: uniqueTags([
+      stringValue(config?.personalContainerTag),
+      `user_project_${projectHash}`,
+      `claudecode_project_${projectHash}`
+    ]),
+    project: uniqueTags([
+      stringValue(config?.repoContainerTag),
+      getLegacyRepoTag(directory)
+    ]),
+    repoContainerTag: stringValue(config?.repoContainerTag)
+  };
+}
+function getLegacyCodexTags(directory) {
+  const config = readJson2(join(homedir(), ".codex", "supermemory.json"));
+  const prefix = stringValue(config?.containerTagPrefix) || "codex";
+  const userIdentity = getGitEmail(directory) || process.env.USER || process.env.USERNAME || hostname();
+  const userHash = sha256(userIdentity);
+  const projectHash = sha256(getProjectBasePath(directory));
+  return {
+    personal: uniqueTags([
+      stringValue(config?.userContainerTag),
+      `${prefix}_user_${userHash}`,
+      `codex_user_${userHash}`
+    ]),
+    project: uniqueTags([
+      stringValue(config?.projectContainerTag),
+      `${prefix}_project_${projectHash}`,
+      `codex_project_${projectHash}`
+    ]),
+    projectContainerTag: stringValue(config?.projectContainerTag)
+  };
+}
+function getLegacyOpenCodeTags(directory) {
+  const config = loadOpenCodeConfig();
+  const prefix = stringValue(config?.containerTagPrefix) || "opencode";
+  const userIdentity = getGitEmail(directory) || process.env.USER || process.env.USERNAME || "anonymous";
+  const userHash = sha256(userIdentity);
+  const projectHashes = [
+    ...new Set([directory, resolve(directory), getProjectBasePath(directory)].map((value) => sha256(value)))
+  ];
+  return {
+    personal: uniqueTags([
+      stringValue(config?.userContainerTag),
+      `${prefix}_user_${userHash}`,
+      `opencode_user_${userHash}`
+    ]),
+    project: uniqueTags([
+      stringValue(config?.projectContainerTag),
+      ...projectHashes.flatMap((hash) => [
+        `${prefix}_project_${hash}`,
+        `opencode_project_${hash}`
+      ])
+    ]),
+    projectContainerTag: stringValue(config?.projectContainerTag)
+  };
+}
+function getResolvedTags(directory, config) {
+  const generated = getGeneratedRepoTag(directory);
+  const cursorPersonal = getLegacyCursorUserTags(directory, config);
+  const cursorProjects = getLegacyCursorProjectTags(directory, config);
+  const claude = getLegacyClaudeTags(directory);
+  const codex = getLegacyCodexTags(directory);
+  const opencode = getLegacyOpenCodeTags(directory);
+  const canonical = config.repoContainerTag || process.env.SUPERMEMORY_REPO_TAG || claude.repoContainerTag || codex.projectContainerTag || opencode.projectContainerTag || generated;
+  const personalReads = uniqueTags([
+    canonical,
+    generated,
+    ...cursorPersonal,
+    ...claude.personal,
+    ...codex.personal,
+    ...opencode.personal
+  ]);
+  const projectReads = uniqueTags([
+    canonical,
+    generated,
+    ...cursorProjects,
+    ...claude.project,
+    ...codex.project,
+    ...opencode.project
+  ]);
+  return {
+    canonical,
+    user: canonical,
+    project: canonical,
+    projectId: getProjectIdentity(directory),
+    projectName: getProjectName(directory),
+    personalReads,
+    projectReads,
+    allReads: uniqueTags([...personalReads, ...projectReads]),
+    legacyCursorPersonal: cursorPersonal,
+    legacyCursorProjects: cursorProjects
+  };
+}
+
 // src/mcp-proxy.ts
 var MCP_URL = process.env.SUPERMEMORY_MCP_URL || "https://mcp.supermemory.ai/mcp";
 var REQUEST_TIMEOUT_MS = 30000;
+var REPO_SCOPED_TOOLS = new Set([
+  "search_memory",
+  "add_memory",
+  "forget_memory",
+  "get_profile",
+  "list_memories",
+  "listMemories",
+  "list_documents",
+  "listDocuments",
+  "save-memory",
+  "memory-graph",
+  "fetch-graph-data"
+]);
+var MEMORY_RESULT_TOOLS = new Set([
+  "search_memory",
+  "get_profile",
+  "list_memories",
+  "listMemories"
+]);
 var sessionId = null;
+function repoNamespace() {
+  const cwd = process.env.CURSOR_PROJECT_DIR || process.cwd();
+  if (cwd === os3.homedir() || cwd === path3.parse(cwd).root)
+    return null;
+  try {
+    return getResolvedTags(cwd, loadConfig(cwd)).canonical;
+  } catch {
+    return null;
+  }
+}
+function withRepoNamespace(message, namespace) {
+  if (!namespace || message.method !== "tools/call")
+    return message;
+  const params = message.params;
+  if (typeof params?.name !== "string" || !REPO_SCOPED_TOOLS.has(params.name)) {
+    return message;
+  }
+  const args = params.arguments ?? {};
+  if (typeof args !== "object" || Array.isArray(args))
+    return message;
+  const chosen = args;
+  if ([chosen.namespace, chosen.containerTag].some((value) => typeof value === "string" && value.trim())) {
+    return message;
+  }
+  return { ...message, params: { ...params, arguments: { ...chosen, namespace } } };
+}
+function mark(value) {
+  return typeof value === "string" && !value.startsWith("◪") ? `◪ ${value}` : value;
+}
+function markStructured(toolName, structured) {
+  if (!structured || typeof structured !== "object")
+    return structured;
+  const data = structured;
+  if (toolName === "search_memory" && Array.isArray(data.results)) {
+    return { ...data, results: data.results.map((r) => ({ ...r, text: mark(r?.text) })) };
+  }
+  if (toolName === "get_profile" && data.profile && typeof data.profile === "object") {
+    const facts = (list) => Array.isArray(list) ? list.map(mark) : list;
+    return {
+      ...data,
+      profile: { ...data.profile, static: facts(data.profile.static), dynamic: facts(data.profile.dynamic) }
+    };
+  }
+  if (Array.isArray(data.memoryEntries)) {
+    return {
+      ...data,
+      memoryEntries: data.memoryEntries.map((e) => ({ ...e, memory: mark(e?.memory) }))
+    };
+  }
+  return structured;
+}
+function markMemoryResult(toolName, response) {
+  if (!MEMORY_RESULT_TOOLS.has(toolName))
+    return response;
+  const result = response?.result;
+  if (!result || result.isError || !Array.isArray(result.content))
+    return response;
+  let marked = false;
+  const content = result.content.map((item) => {
+    if (item?.type !== "text" || typeof item.text !== "string")
+      return item;
+    const text = item.text.replace(/^- (?!◪|\+\d+ more$)/gm, () => {
+      marked = true;
+      return "- ◪ ";
+    });
+    return { ...item, text };
+  });
+  if (!marked)
+    return response;
+  content.push({ type: "text", text: MEMORY_MARK_NOTE });
+  const structured = result.structuredContent === undefined ? {} : { structuredContent: markStructured(toolName, result.structuredContent) };
+  return { ...response, result: { ...result, content, ...structured } };
+}
+function relay(line, message) {
+  const toolName = message.params?.name;
+  if (message.method !== "tools/call" || typeof toolName !== "string")
+    return line;
+  try {
+    const response = JSON.parse(line);
+    if (response.id !== message.id)
+      return line;
+    return `${JSON.stringify(markMemoryResult(toolName, response))}
+`;
+  } catch {
+    return line;
+  }
+}
 function send(message) {
   process.stdout.write(`${JSON.stringify(message)}
 `);
@@ -341,14 +799,15 @@ async function forward(message, apiKey) {
   if (!body.trim())
     return;
   if ((response.headers.get("content-type") || "").includes("text/event-stream")) {
-    emitSseData(body, (line) => process.stdout.write(line));
+    emitSseData(body, (line) => process.stdout.write(relay(line, message)));
   } else {
-    process.stdout.write(`${body.trim()}
-`);
+    process.stdout.write(relay(`${body.trim()}
+`, message));
   }
 }
 function startMcpProxy() {
   let apiKey = getApiKey(loadConfig());
+  const namespace = repoNamespace();
   let queue = Promise.resolve();
   const lines = createInterface({ input: process.stdin });
   lines.on("line", (line) => {
@@ -367,7 +826,7 @@ function startMcpProxy() {
         return;
       }
       try {
-        await forward(message, apiKey);
+        await forward(withRepoNamespace(message, namespace), apiKey);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         sendError(message.id, -32000, `Supermemory MCP proxy error: ${detail}`);
@@ -380,7 +839,7 @@ function startMcpProxy() {
 }
 
 // src/hook-api.ts
-import { createHash, createHmac } from "node:crypto";
+import { createHash as createHash2, createHmac } from "node:crypto";
 
 // node_modules/supermemory/dist/esm/generated/core/auth/AuthProvider.js
 function isAuthProvider(value) {
@@ -516,8 +975,8 @@ function encodeValue(value, shouldEncode) {
   if (value === null) {
     return "";
   }
-  const stringValue = String(value);
-  return shouldEncode ? encodeURIComponent(stringValue) : stringValue;
+  const stringValue2 = String(value);
+  return shouldEncode ? encodeURIComponent(stringValue2) : stringValue2;
 }
 function stringifyObject(obj, prefix = "", options) {
   const parts = [];
@@ -1007,12 +1466,12 @@ async function requestWithRetries(requestFn, maxRetries = DEFAULT_MAX_RETRIES, a
       const aborted = abortSignal?.aborted === true || error instanceof Error && error.name === "AbortError";
       if (aborted || i >= maxRetries)
         throw error;
-      await new Promise((resolve) => setTimeout(resolve, addSymmetricJitter(Math.min(INITIAL_RETRY_DELAY * 2 ** i, MAX_RETRY_DELAY))));
+      await new Promise((resolve2) => setTimeout(resolve2, addSymmetricJitter(Math.min(INITIAL_RETRY_DELAY * 2 ** i, MAX_RETRY_DELAY))));
       continue;
     }
     if (!isRetryableStatusCode(response.status) || i >= maxRetries)
       return response;
-    await new Promise((resolve) => setTimeout(resolve, getRetryDelayFromHeaders(response, i)));
+    await new Promise((resolve2) => setTimeout(resolve2, getRetryDelayFromHeaders(response, i)));
   }
 }
 
@@ -1220,8 +1679,8 @@ class HttpResponsePromise extends Promise {
   innerPromise;
   unwrappedPromise;
   constructor(promise) {
-    super((resolve) => {
-      resolve(undefined);
+    super((resolve2) => {
+      resolve2(undefined);
     });
     this.innerPromise = promise;
   }
@@ -1264,7 +1723,7 @@ class HttpResponsePromise extends Promise {
   }
 }
 // node_modules/supermemory/dist/esm/generated/core/url/join.js
-function join(base, ...segments) {
+function join2(base, ...segments) {
   if (!base) {
     return "";
   }
@@ -1369,7 +1828,7 @@ async function makePassthroughRequest(input, init, clientOptions, requestOptions
   if (url.startsWith("http://") || url.startsWith("https://")) {
     fullUrl = url;
   } else if (baseUrl != null) {
-    fullUrl = join(baseUrl, url);
+    fullUrl = join2(baseUrl, url);
   } else {
     fullUrl = url;
   }
@@ -1488,13 +1947,13 @@ async function getFileWithMetadata(file, { noSniffFileSize } = {}) {
 function isFileLike(value) {
   return isBuffer(value) || isArrayBufferView(value) || isArrayBuffer(value) || isUint8Array(value) || isBlob(value) || isFile(value) || isStreamLike(value) || isReadableStream(value);
 }
-async function tryGetFileSizeFromPath(path3) {
+async function tryGetFileSizeFromPath(path4) {
   try {
     const fs3 = await import("fs");
     if (!fs3?.promises?.stat) {
       return;
     }
-    const fileStat = await fs3.promises.stat(path3);
+    const fileStat = await fs3.promises.stat(path4);
     return fileStat.size;
   } catch (_fallbackError) {
     return;
@@ -1542,11 +2001,11 @@ function tryGetContentTypeFromFileLike(data) {
   }
   return;
 }
-function getNameFromPath(path3) {
-  const lastForwardSlash = path3.lastIndexOf("/");
-  const lastBackSlash = path3.lastIndexOf("\\");
+function getNameFromPath(path4) {
+  const lastForwardSlash = path4.lastIndexOf("/");
+  const lastBackSlash = path4.lastIndexOf("\\");
   const lastSlashIndex = Math.max(lastForwardSlash, lastBackSlash);
-  return lastSlashIndex >= 0 ? path3.substring(lastSlashIndex + 1) : path3;
+  return lastSlashIndex >= 0 ? path4.substring(lastSlashIndex + 1) : path4;
 }
 function isNamedValue(value) {
   return typeof value === "object" && value != null && "name" in value;
@@ -1762,7 +2221,7 @@ var exports_url = {};
 __export(exports_url, {
   toQueryString: () => toQueryString,
   queryBuilder: () => queryBuilder,
-  join: () => join,
+  join: () => join2,
   encodePathParam: () => encodePathParam
 });
 
@@ -1998,7 +2457,7 @@ var SupermemoryEnvironment = {
 };
 
 // node_modules/supermemory/dist/esm/generated/errors/handleNonStatusCodeError.js
-function handleNonStatusCodeError(error, rawResponse, method, path3) {
+function handleNonStatusCodeError(error, rawResponse, method, path4) {
   switch (error.reason) {
     case "non-json":
       throw new SupermemoryError({
@@ -2012,7 +2471,7 @@ function handleNonStatusCodeError(error, rawResponse, method, path3) {
         rawResponse
       });
     case "timeout":
-      throw new SupermemoryTimeoutError(`Timeout exceeded when calling ${method} ${path3}.`, {
+      throw new SupermemoryTimeoutError(`Timeout exceeded when calling ${method} ${path4}.`, {
         cause: error.cause
       });
     case "unknown":
@@ -3806,12 +4265,12 @@ async function sdkRequest(request) {
     throw new Error(status ? `Supermemory request failed with HTTP ${status}` : "Supermemory request failed or timed out");
   }
 }
-function sha256(input) {
-  return createHash("sha256").update(input).digest("hex");
+function sha2562(input) {
+  return createHash2("sha256").update(input).digest("hex");
 }
 function headers(apiKey, containerTag) {
-  const contentHash = sha256(containerTag);
-  const payload = [sha256(apiKey), contentHash, INTEGRITY_VERSION].join(":");
+  const contentHash = sha2562(containerTag);
+  const payload = [sha2562(apiKey), contentHash, INTEGRITY_VERSION].join(":");
   const signature = createHmac("sha256", SEED).update(payload).digest("base64url");
   return {
     Authorization: `Bearer ${apiKey}`,
@@ -3821,8 +4280,28 @@ function headers(apiKey, containerTag) {
     "x-sm-source": "cursor"
   };
 }
-async function post(baseUrl, apiKey, path3, containerTag, body) {
-  const response = await fetch(`${(baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, "")}${path3}`, {
+async function getAccount(baseUrl, apiKey) {
+  for (const path4 of ["/session", "/v3/session"]) {
+    const response = await fetch(`${(baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, "")}${path4}`, {
+      headers: { Authorization: `Bearer ${apiKey}`, "x-sm-source": "cursor" },
+      signal: AbortSignal.timeout(8000)
+    }).catch(() => null);
+    if (!response?.ok)
+      continue;
+    const session = await response.json().catch(() => null);
+    if (!session || typeof session !== "object")
+      continue;
+    const text = (value) => typeof value === "string" && value ? value : undefined;
+    return {
+      email: text(session.user?.email),
+      name: text(session.user?.name),
+      orgName: text(session.org?.name)
+    };
+  }
+  return {};
+}
+async function post(baseUrl, apiKey, path4, containerTag, body) {
+  const response = await fetch(`${(baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, "")}${path4}`, {
     method: "POST",
     headers: headers(apiKey, containerTag),
     body: JSON.stringify(body),
@@ -3882,355 +4361,11 @@ async function searchMemories(baseUrl, apiKey, containerTag, query, scope, apiVe
   }, { abortSignal, maxRetries: 0 }));
 }
 
-// src/tags.ts
-import { execSync } from "node:child_process";
-import { createHash as createHash2 } from "node:crypto";
-import {
-  existsSync,
-  readFileSync,
-  realpathSync
-} from "node:fs";
-import { hostname, homedir, userInfo } from "node:os";
-import {
-  basename,
-  dirname,
-  join as join2,
-  resolve,
-  sep
-} from "node:path";
-function sha2562(input) {
-  return createHash2("sha256").update(input).digest("hex").slice(0, 16);
-}
-function getGitRoot(directory) {
-  const isolateWorktrees = process.env.SUPERMEMORY_ISOLATE_WORKTREES === "true";
-  try {
-    if (isolateWorktrees) {
-      return execSync("git rev-parse --show-toplevel", {
-        cwd: directory,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"]
-      }).trim() || null;
-    }
-    const gitCommonDir = execSync("git rev-parse --git-common-dir", {
-      cwd: directory,
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"]
-    }).trim();
-    if (gitCommonDir === ".git") {
-      return execSync("git rev-parse --show-toplevel", {
-        cwd: directory,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"]
-      }).trim() || null;
-    }
-    const resolvedCommonDir = resolve(directory, gitCommonDir);
-    if (basename(resolvedCommonDir) === ".git" && !resolvedCommonDir.includes(`${sep}.git${sep}`)) {
-      return dirname(resolvedCommonDir);
-    }
-    return execSync("git rev-parse --show-toplevel", {
-      cwd: directory,
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"]
-    }).trim() || null;
-  } catch {
-    return null;
-  }
-}
-function getProjectBasePath(directory) {
-  return getGitRoot(directory) || resolve(directory);
-}
-function getGitEmail(directory) {
-  try {
-    return execSync("git config user.email", {
-      cwd: getProjectBasePath(directory),
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"]
-    }).trim() || null;
-  } catch {
-    return null;
-  }
-}
-function getMachineId() {
-  return `${hostname()}_${userInfo().username}`;
-}
-function normalizeGitRemote(remoteUrl) {
-  const raw = remoteUrl.trim();
-  if (!raw)
-    return null;
-  let normalized;
-  if (/^[a-z][a-z\d+.-]*:\/\//i.test(raw)) {
-    try {
-      const parsed = new URL(raw);
-      normalized = parsed.protocol === "file:" ? `file:${decodeURIComponent(parsed.pathname)}` : `${parsed.hostname.toLowerCase()}${parsed.port ? `:${parsed.port}` : ""}/${parsed.pathname.replace(/^\/+/, "")}`;
-    } catch {
-      normalized = raw;
-    }
-  } else {
-    const scpStyle = raw.match(/^(?:[^@/]+@)?([^:]+):(.+)$/);
-    normalized = scpStyle ? `${scpStyle[1].toLowerCase()}/${scpStyle[2]}` : `file:${resolve(raw)}`;
-  }
-  return normalized.replace(/[?#].*$/, "").replace(/\/+$/, "").replace(/\.git$/i, "").replace(/\/{2,}/g, "/").toLowerCase();
-}
-var repoInfoCache = new Map;
-function getGitRepoInfo(directory) {
-  const cached = repoInfoCache.get(directory);
-  if (cached)
-    return cached;
-  try {
-    const remoteUrl = execSync("git remote get-url origin", {
-      cwd: directory,
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"]
-    }).trim();
-    const normalizedRemote = normalizeGitRemote(remoteUrl);
-    const displayRemote = remoteUrl.replace(/\/+$/, "").replace(/\.git$/i, "");
-    const separator = Math.max(displayRemote.lastIndexOf("/"), displayRemote.lastIndexOf(":"));
-    const result = {
-      name: displayRemote.slice(separator + 1) || null,
-      normalizedRemote
-    };
-    repoInfoCache.set(directory, result);
-    return result;
-  } catch {
-    const result = { name: null, normalizedRemote: null };
-    repoInfoCache.set(directory, result);
-    return result;
-  }
-}
-function readJson2(filePath) {
-  try {
-    if (!existsSync(filePath))
-      return null;
-    return JSON.parse(readFileSync(filePath, "utf-8"));
-  } catch {
-    return null;
-  }
-}
-function stripJsoncComments(content) {
-  let result = "";
-  let index = 0;
-  let inString = false;
-  let singleLineComment = false;
-  let multiLineComment = false;
-  while (index < content.length) {
-    const char = content[index];
-    const next = content[index + 1];
-    if (!singleLineComment && !multiLineComment && char === '"') {
-      let backslashes = 0;
-      for (let cursor = index - 1;cursor >= 0 && content[cursor] === "\\"; cursor--) {
-        backslashes++;
-      }
-      if (backslashes % 2 === 0)
-        inString = !inString;
-      result += char;
-      index++;
-      continue;
-    }
-    if (inString) {
-      result += char;
-      index++;
-      continue;
-    }
-    if (!singleLineComment && !multiLineComment && char === "/" && next === "/") {
-      singleLineComment = true;
-      index += 2;
-      continue;
-    }
-    if (!singleLineComment && !multiLineComment && char === "/" && next === "*") {
-      multiLineComment = true;
-      index += 2;
-      continue;
-    }
-    if (singleLineComment) {
-      if (char === `
-`) {
-        singleLineComment = false;
-        result += char;
-      }
-      index++;
-      continue;
-    }
-    if (multiLineComment) {
-      if (char === "*" && next === "/") {
-        multiLineComment = false;
-        index += 2;
-        continue;
-      }
-      if (char === `
-`)
-        result += char;
-      index++;
-      continue;
-    }
-    result += char;
-    index++;
-  }
-  return result.replace(/,\s*([}\]])/g, "$1");
-}
-function loadOpenCodeConfig() {
-  const configDir = join2(homedir(), ".config", "opencode");
-  for (const filename of ["supermemory.jsonc", "supermemory.json"]) {
-    try {
-      const configPath = join2(configDir, filename);
-      if (!existsSync(configPath))
-        continue;
-      return JSON.parse(stripJsoncComments(readFileSync(configPath, "utf-8")));
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-function stringValue(value) {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-function uniqueTags(tags) {
-  return [
-    ...new Set(tags.filter((tag) => typeof tag === "string" && tag.trim().length > 0))
-  ];
-}
-function sanitizeRepoName(name) {
-  const sanitized = name.toLowerCase().replace(/[^a-z0-9]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
-  return sanitized.slice(0, 95).replace(/_+$/g, "") || "unknown";
-}
-function getProjectIdentity(directory) {
-  const basePath = getProjectBasePath(directory);
-  const { normalizedRemote } = getGitRepoInfo(basePath);
-  const isolateWorktrees = process.env.SUPERMEMORY_ISOLATE_WORKTREES === "true";
-  let localIdentity = basePath;
-  try {
-    localIdentity = realpathSync.native(basePath);
-  } catch {}
-  return sha2562(!isolateWorktrees && normalizedRemote ? normalizedRemote : `path:${localIdentity}`);
-}
-function getProjectName(directory) {
-  const basePath = getProjectBasePath(directory);
-  return getGitRepoInfo(basePath).name || basename(basePath) || "unknown";
-}
-function getGeneratedRepoTag(directory) {
-  const name = sanitizeRepoName(getProjectName(directory)).slice(0, 72).replace(/_+$/g, "");
-  return `repo_${name || "unknown"}__${getProjectIdentity(directory)}`;
-}
-function getLegacyRepoTag(directory) {
-  return `repo_${sanitizeRepoName(getProjectName(directory))}`;
-}
-function getLegacyCursorUserTags(directory, config) {
-  const identities = uniqueTags([
-    config.userContainerTag || process.env.SUPERMEMORY_USER_TAG || process.env.CURSOR_USER_EMAIL || getGitEmail(directory) || getMachineId()
-  ]);
-  return identities.map((identity) => `cursor_user_${sha2562(identity)}`);
-}
-function getLegacyCursorProjectTags(directory, config) {
-  const basePath = getProjectBasePath(directory);
-  const identities = uniqueTags([
-    config.projectContainerTag || process.env.SUPERMEMORY_PROJECT_TAG || basePath
-  ]);
-  return identities.map((identity) => `cursor_project_${sha2562(identity)}`);
-}
-function getLegacyClaudeTags(directory) {
-  const basePath = getProjectBasePath(directory);
-  const projectHash = sha2562(basePath);
-  const config = readJson2(join2(basePath, ".claude", ".supermemory-claude", "config.json"));
-  return {
-    personal: uniqueTags([
-      stringValue(config?.personalContainerTag),
-      `user_project_${projectHash}`,
-      `claudecode_project_${projectHash}`
-    ]),
-    project: uniqueTags([
-      stringValue(config?.repoContainerTag),
-      getLegacyRepoTag(directory)
-    ]),
-    repoContainerTag: stringValue(config?.repoContainerTag)
-  };
-}
-function getLegacyCodexTags(directory) {
-  const config = readJson2(join2(homedir(), ".codex", "supermemory.json"));
-  const prefix = stringValue(config?.containerTagPrefix) || "codex";
-  const userIdentity = getGitEmail(directory) || process.env.USER || process.env.USERNAME || hostname();
-  const userHash = sha2562(userIdentity);
-  const projectHash = sha2562(getProjectBasePath(directory));
-  return {
-    personal: uniqueTags([
-      stringValue(config?.userContainerTag),
-      `${prefix}_user_${userHash}`,
-      `codex_user_${userHash}`
-    ]),
-    project: uniqueTags([
-      stringValue(config?.projectContainerTag),
-      `${prefix}_project_${projectHash}`,
-      `codex_project_${projectHash}`
-    ]),
-    projectContainerTag: stringValue(config?.projectContainerTag)
-  };
-}
-function getLegacyOpenCodeTags(directory) {
-  const config = loadOpenCodeConfig();
-  const prefix = stringValue(config?.containerTagPrefix) || "opencode";
-  const userIdentity = getGitEmail(directory) || process.env.USER || process.env.USERNAME || "anonymous";
-  const userHash = sha2562(userIdentity);
-  const projectHashes = [
-    ...new Set([directory, resolve(directory), getProjectBasePath(directory)].map((value) => sha2562(value)))
-  ];
-  return {
-    personal: uniqueTags([
-      stringValue(config?.userContainerTag),
-      `${prefix}_user_${userHash}`,
-      `opencode_user_${userHash}`
-    ]),
-    project: uniqueTags([
-      stringValue(config?.projectContainerTag),
-      ...projectHashes.flatMap((hash) => [
-        `${prefix}_project_${hash}`,
-        `opencode_project_${hash}`
-      ])
-    ]),
-    projectContainerTag: stringValue(config?.projectContainerTag)
-  };
-}
-function getResolvedTags(directory, config) {
-  const generated = getGeneratedRepoTag(directory);
-  const cursorPersonal = getLegacyCursorUserTags(directory, config);
-  const cursorProjects = getLegacyCursorProjectTags(directory, config);
-  const claude = getLegacyClaudeTags(directory);
-  const codex = getLegacyCodexTags(directory);
-  const opencode = getLegacyOpenCodeTags(directory);
-  const canonical = config.repoContainerTag || process.env.SUPERMEMORY_REPO_TAG || claude.repoContainerTag || codex.projectContainerTag || opencode.projectContainerTag || generated;
-  const personalReads = uniqueTags([
-    canonical,
-    generated,
-    ...cursorPersonal,
-    ...claude.personal,
-    ...codex.personal,
-    ...opencode.personal
-  ]);
-  const projectReads = uniqueTags([
-    canonical,
-    generated,
-    ...cursorProjects,
-    ...claude.project,
-    ...codex.project,
-    ...opencode.project
-  ]);
-  return {
-    canonical,
-    user: canonical,
-    project: canonical,
-    projectId: getProjectIdentity(directory),
-    projectName: getProjectName(directory),
-    personalReads,
-    projectReads,
-    allReads: uniqueTags([...personalReads, ...projectReads]),
-    legacyCursorPersonal: cursorPersonal,
-    legacyCursorProjects: cursorProjects
-  };
-}
-
 // src/mcp-install.ts
 import fs3 from "node:fs";
-import os3 from "node:os";
-import path3 from "node:path";
-var GLOBAL_MCP_PATH = path3.join(os3.homedir(), ".cursor", "mcp.json");
+import os4 from "node:os";
+import path4 from "node:path";
+var GLOBAL_MCP_PATH = path4.join(os4.homedir(), ".cursor", "mcp.json");
 function writeGlobalMcpEntry(cliPath, configPath = GLOBAL_MCP_PATH) {
   let config = {};
   try {
@@ -4246,7 +4381,7 @@ function writeGlobalMcpEntry(cliPath, configPath = GLOBAL_MCP_PATH) {
     args: [cliPath, "mcp"]
   };
   config.mcpServers = servers;
-  fs3.mkdirSync(path3.dirname(configPath), { recursive: true });
+  fs3.mkdirSync(path4.dirname(configPath), { recursive: true });
   fs3.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}
 `);
   return configPath;
@@ -4338,6 +4473,11 @@ switch (command) {
       const tags = getResolvedTags(process.cwd(), config);
       await getProfile(config.baseUrl, apiKey, tags.canonical, resolveApiVersion(config.baseUrl, config.apiVersion) === "legacy" ? "connectivity probe" : undefined, undefined, config.apiVersion);
       console.log(`Connected to Supermemory (${tags.canonical}).`);
+      const account = await getAccount(config.baseUrl, apiKey);
+      const who = account.email ?? account.name;
+      if (who) {
+        console.log(`Account: ${who}${account.orgName ? ` (${account.orgName})` : ""}`);
+      }
     } catch (error) {
       console.error(`Supermemory is unreachable: ${error instanceof Error ? error.message : String(error)}`);
       process.exitCode = 1;

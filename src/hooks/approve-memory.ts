@@ -3,10 +3,16 @@ import { isMainModule, runHook } from "../runtime.ts";
 
 const READ_ONLY_TOOLS = [
   "search_memory",
+  "get_profile",
+  "list_memories",
   "listMemories",
+  "list_documents",
   "listDocuments",
+  "get_document",
   "getDocument",
+  "list_spaces",
   "listSpaces",
+  "who_am_i",
   "whoAmI",
 ];
 

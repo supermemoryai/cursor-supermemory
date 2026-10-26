@@ -6,6 +6,7 @@
 - Name the agent on the approval page: `--client grok_bot` (or Grok's own variables / a `~/.grok` install) shows Grok Bot instead of Cursor, and the device, OS, folder and plugin version replace "Unknown".
 - Add `memory-connect`, `memory-status` and `memory-disconnect` skills for hosts without slash commands, and locate the install on Cursor, Grok and Claude Code paths in every command.
 - Ask the agent to open replies that use recalled memory with `◪ Supermemory · recalled N memories` (`showRecallNotice`, on by default), and let the MCP proxy pick up a key saved mid-session.
+- Parity with the Claude Code and Codex plugins: the MCP proxy marks memories from `search_memory`, `get_profile` and `list_memories` with ◪ and defaults space-scoped calls to the repository namespace; capture redacts credential-shaped values and `<private>` content; recall injects up to 15 memories; `status` names the account; an unconnected session opens the browser sign-in once; read-only tools under the server's snake_case names are auto-approved; the ◪ citation wording matches the other plugins.
 
 ## 1.2.3
 

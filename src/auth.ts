@@ -94,7 +94,7 @@ export function detectClient(
 export function buildAuthUrl(client: AuthClient, cwd = process.cwd()): string {
   const url = new URL(AUTH_URL);
   url.search = new URLSearchParams({
-    callback: CALLBACK_URL,
+    callback: `${CALLBACK_URL}?client=${client.id}`,
     client: client.id,
     hostname: `${client.name} - ${os.hostname()}`,
     os: `${os.platform()} ${os.release()}`,
@@ -183,9 +183,10 @@ export function listenForCallback(
       }
 
       saveCredentials(apiKey);
+      const named = url.searchParams.get("client") ? detectClient(url.searchParams.get("client")) : client;
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(
-        page(`Connected to ${client.name}!`, "Supermemory is ready. You can close this tab."),
+        page(`Connected to ${named.name}!`, "Supermemory is ready. You can close this tab."),
         () => finish({ success: true, apiKey }),
       );
     });
@@ -210,10 +211,12 @@ export function listenForCallback(
 export async function beginLogin(
   client: AuthClient,
   cliPath: string,
+  { reopen = true } = {},
 ): Promise<{ url: string; error?: string }> {
   const url = buildAuthUrl(client);
   let state = await probeListener();
-  if (state === "free") {
+  const started = state === "free";
+  if (started) {
     spawn(process.execPath, [cliPath, "login-listen", "--client", client.id], {
       detached: true,
       stdio: "ignore",
@@ -226,7 +229,7 @@ export async function beginLogin(
   if (state !== "ours") {
     return { url, error: `Could not open the sign-in callback on port ${AUTH_PORT}` };
   }
-  openBrowser(url);
+  if (started || reopen) openBrowser(url);
   return { url };
 }
 

@@ -45,7 +45,7 @@ test("detects Grok from --client, its hook variables or a ~/.grok install", () =
 test("the auth URL names the client and the device for the approval page", () => {
   const url = new URL(buildAuthUrl(detectClient("grok_bot", {}), "/workspace"));
   expect(url.searchParams.get("client")).toBe("grok_bot");
-  expect(url.searchParams.get("callback")).toBe("http://localhost:19878/callback");
+  expect(url.searchParams.get("callback")).toBe("http://localhost:19878/callback?client=grok_bot");
   expect(url.searchParams.get("hostname")).toStartWith("Grok Bot - ");
   expect(url.searchParams.get("cwd")).toBe("/workspace");
   expect(url.searchParams.get("cli_version")).toMatch(/^\d+\.\d+\.\d+/);

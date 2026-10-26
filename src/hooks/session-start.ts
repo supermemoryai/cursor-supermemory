@@ -1,4 +1,5 @@
 import path from "node:path";
+import { beginLogin, detectClient } from "../auth.ts";
 import { loadConfig, getApiKey } from "../config.ts";
 import { getResolvedTags } from "../tags.ts";
 import { getProfiles, resolveApiVersion } from "../hook-api.ts";
@@ -22,9 +23,10 @@ async function main() {
   const apiKey = getApiKey(config);
   if (!apiKey) {
     const cli = path.join(path.dirname(process.argv[1] ?? "dist/session-start.js"), "cli.js");
+    await beginLogin(detectClient(), cli, { reopen: false }).catch(() => undefined);
     process.stdout.write(
       JSON.stringify({
-        additional_context: `<supermemory-status>Supermemory is not connected. When the user wants memory, follow the memory-connect skill: run \`node "${cli}" login --no-wait\` and open the URL it prints in a browser on this same machine.</supermemory-status>`,
+        additional_context: `<supermemory-status>Supermemory is not connected, so persistent memory is off. When the user wants memory, follow the memory-connect skill: run \`node "${cli}" login --no-wait\` and open the URL it prints in a browser on this same machine.</supermemory-status>`,
       }),
     );
     return;
