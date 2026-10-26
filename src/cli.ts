@@ -37,8 +37,11 @@ async function main(): Promise<void> {
 
     case "login": {
       const config = loadConfig();
-      console.log("Opening browser to authenticate...");
-      await startAuthFlow(getOAuthConfig(getApiBaseUrl(config), getMcpUrl(config)));
+      const printUrl = process.argv.includes("--print-url");
+      if (!printUrl) console.log("Opening browser to authenticate...");
+      await startAuthFlow(getOAuthConfig(getApiBaseUrl(config), getMcpUrl(config)), undefined, {
+        printUrl,
+      });
       console.log("Authenticated successfully.");
       if (getApiKey(config)) {
         console.log(

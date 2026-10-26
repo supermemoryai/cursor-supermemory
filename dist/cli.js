@@ -370,7 +370,7 @@ async function openUrl(url) {
   }
   await run(process.platform === "darwin" ? "open" : "xdg-open", [href]);
 }
-async function startAuthFlow(config, timeoutMs = AUTH_TIMEOUT) {
+async function startAuthFlow(config, timeoutMs = AUTH_TIMEOUT, { printUrl = false } = {}) {
   return withAuthLock(async (remaining) => {
     const controller = new AbortController;
     const timer = setTimeout(() => controller.abort(new Error("Authentication timed out")), remaining);
@@ -447,6 +447,11 @@ async function startAuthFlow(config, timeoutMs = AUTH_TIMEOUT) {
               prompt: "consent"
             }).toString();
             client = registered;
+            if (printUrl) {
+              process.stdout.write(`SUPERMEMORY_AUTHORIZE_URL=${authorizationUrl}
+`);
+              return;
+            }
             process.stderr.write(`
 Open this URL to connect Supermemory to Cursor:
 
@@ -4580,8 +4585,12 @@ async function main() {
     }
     case "login": {
       const config = loadConfig();
-      console.log("Opening browser to authenticate...");
-      await startAuthFlow(getOAuthConfig(getApiBaseUrl(config), getMcpUrl(config)));
+      const printUrl = process.argv.includes("--print-url");
+      if (!printUrl)
+        console.log("Opening browser to authenticate...");
+      await startAuthFlow(getOAuthConfig(getApiBaseUrl(config), getMcpUrl(config)), undefined, {
+        printUrl
+      });
       console.log("Authenticated successfully.");
       if (getApiKey(config)) {
         console.log("An environment/config API key still takes precedence. Remove it to use OAuth.");

@@ -472,6 +472,7 @@ export async function openUrl(url: string | URL): Promise<void> {
 export async function startAuthFlow(
   config: OAuthConfig,
   timeoutMs = AUTH_TIMEOUT,
+  { printUrl = false }: { printUrl?: boolean } = {},
 ): Promise<string> {
   return withAuthLock(async (remaining) => {
     const controller = new AbortController();
@@ -578,6 +579,11 @@ export async function startAuthFlow(
               prompt: "consent",
             }).toString();
             client = registered;
+            // The Supermemory CLI collects these links to approve several plugins on one consent screen.
+            if (printUrl) {
+              process.stdout.write(`SUPERMEMORY_AUTHORIZE_URL=${authorizationUrl}\n`);
+              return;
+            }
             process.stderr.write(
               `\nOpen this URL to connect Supermemory to Cursor:\n\n  ${authorizationUrl}\n\nWaiting...\n`,
             );
