@@ -129,8 +129,7 @@ function normalizeUrl(value: string): string | null {
   }
 }
 
-// The OAuth resource. Hosted `api.*` backends map to their `mcp.*` sibling; any
-// other custom backend must name its MCP server explicitly.
+// The OAuth resource (the MCP server URL tokens are issued for).
 export function getMcpUrl(config: Config): string {
   if (process.env.SUPERMEMORY_MCP_URL) {
     const configured = normalizeUrl(process.env.SUPERMEMORY_MCP_URL);

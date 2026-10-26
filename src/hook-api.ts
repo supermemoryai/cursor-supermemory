@@ -29,7 +29,6 @@ export function resolveApiVersion(
     : "legacy";
 }
 
-// A static API key, or a resolver called before every request so OAuth tokens stay current.
 export type AuthSource = string | (() => Promise<string>);
 
 function resolveAuth(auth: AuthSource): Promise<string> {

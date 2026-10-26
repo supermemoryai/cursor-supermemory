@@ -38,7 +38,6 @@ async function main(): Promise<void> {
     case "login": {
       const config = loadConfig();
       console.log("Opening browser to authenticate...");
-      // Signing in replaces any saved `{apiKey}` credentials with OAuth tokens.
       await startAuthFlow(getOAuthConfig(getApiBaseUrl(config), getMcpUrl(config)));
       console.log("Authenticated successfully.");
       if (getApiKey(config)) {

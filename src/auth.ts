@@ -102,7 +102,7 @@ export function loadCredentialData(): Credentials | null {
   return data?.type === "oauth" || (data as { apiKey?: unknown } | null)?.apiKey ? data : null;
 }
 
-// A saved `{apiKey}` file keeps working; never hand an OAuth token to a synchronous caller.
+// Never hand an OAuth token to a synchronous caller: it may need a refresh first.
 export function loadCredentials(): string | undefined {
   const data = loadCredentialData();
   return data?.type === "oauth" ? undefined : data?.apiKey;
@@ -358,10 +358,8 @@ async function exchangeToken(
   return data.access_token;
 }
 
-// Rotates the refresh token. The request always runs to completion and saves
-// the replacement, whatever the caller's deadline: aborting it mid-flight would
-// leave the server holding a rotated refresh token we never stored, and the next
-// refresh would fail with invalid_grant and sign the user out.
+// Never abort a refresh mid-flight: the server would rotate a refresh token we never
+// stored, and the next refresh would fail with invalid_grant and sign the user out.
 let pendingRefresh: Promise<string> | null = null;
 
 function refreshCredentials(config: OAuthConfig): Promise<string> {
@@ -420,16 +418,13 @@ export async function getAccessToken(
   return waitFor(refreshCredentials(config), timeoutMs);
 }
 
-// Resolves once any in-flight refresh has saved or failed, so a process that
-// exits explicitly can let the rotated tokens land first.
+// Await before an explicit exit so rotated tokens from an in-flight refresh are saved.
 export async function settleAuth(): Promise<void> {
   while (pendingRefresh) {
     await pendingRefresh.catch(() => {});
   }
 }
 
-// Revokes an OAuth refresh token, then removes the saved credentials. Returns
-// whether any credentials were stored.
 export async function clearCredentials(): Promise<boolean> {
   return withAuthLock(async (remaining) => {
     const credentials = readJson<Credentials>(CREDENTIALS_FILE);
