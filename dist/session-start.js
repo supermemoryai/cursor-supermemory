@@ -15,6 +15,9 @@ var __export = (target, all) => {
 };
 var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
+// src/hooks/session-start.ts
+import path3 from "node:path";
+
 // src/config.ts
 import path2 from "node:path";
 import os2 from "node:os";
@@ -24,14 +27,23 @@ import fs2 from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
-var CREDENTIALS_DIR = path.join(os.homedir(), ".supermemory-cursor");
-var CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "credentials.json");
+var AUTH_PORT = Number(process.env.SUPERMEMORY_AUTH_PORT) || 19878;
+var CALLBACK_URL = `http://localhost:${AUTH_PORT}/callback`;
 var AUTH_URL = process.env.SUPERMEMORY_AUTH_URL || "https://console.supermemory.ai/auth/connect";
+var configuredTimeout = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT);
+var LISTEN_TIMEOUT_MS = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 10 * 60000;
+function credentialsDir() {
+  return path.join(os.homedir(), ".supermemory-cursor");
+}
+function credentialsFile() {
+  return path.join(credentialsDir(), "credentials.json");
+}
 function loadCredentials() {
   try {
-    if (!fs.existsSync(CREDENTIALS_FILE))
+    const file = credentialsFile();
+    if (!fs.existsSync(file))
       return null;
-    const data = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, "utf-8"));
+    const data = JSON.parse(fs.readFileSync(file, "utf-8"));
     if (data.apiKey)
       return data;
     return null;
@@ -48,6 +60,7 @@ var DEFAULTS = {
   maxMemories: 10,
   maxProjectMemories: 5,
   injectProfile: true,
+  showRecallNotice: true,
   signalExtraction: false,
   signalKeywords: ["remember", "architecture", "decision", "bug", "fix"],
   signalTurnsBefore: 3,
@@ -90,6 +103,7 @@ function loadConfig(cwd) {
     maxMemories: merged.maxMemories,
     maxProjectMemories: merged.maxProjectMemories,
     injectProfile: merged.injectProfile,
+    showRecallNotice: merged.showRecallNotice !== false,
     signalExtraction: merged.signalExtraction,
     signalKeywords: Array.isArray(merged.signalKeywords) ? merged.signalKeywords.filter((keyword) => typeof keyword === "string") : DEFAULTS.signalKeywords,
     signalTurnsBefore: merged.signalTurnsBefore,
@@ -4010,9 +4024,6 @@ async function readStdinText() {
   }
   return Buffer.concat(chunks).toString("utf8");
 }
-function pluginRootFromEnv(env = process.env) {
-  return [env.CURSOR_PLUGIN_ROOT, env.CLAUDE_PLUGIN_ROOT, env.GROK_PLUGIN_ROOT].find((value) => !!value && !value.includes("${"));
-}
 
 // src/hooks/session-start.ts
 var ok = () => process.stdout.write(JSON.stringify({}));
@@ -4023,10 +4034,9 @@ async function main() {
   const config = loadConfig(workspaceRoot);
   const apiKey = getApiKey(config);
   if (!apiKey) {
-    const pluginRoot = pluginRootFromEnv();
-    const loginCmd = pluginRoot ? `node "${pluginRoot}/dist/cli.js" login` : "node dist/cli.js login";
+    const cli = path3.join(path3.dirname(process.argv[1] ?? "dist/session-start.js"), "cli.js");
     process.stdout.write(JSON.stringify({
-      additional_context: `<supermemory-status>Supermemory is not connected. Ask the user to run \`${loginCmd}\` before relying on persistent memory.</supermemory-status>`
+      additional_context: `<supermemory-status>Supermemory is not connected. When the user wants memory, follow the memory-connect skill: run \`node "${cli}" login --no-wait\` and open the URL it prints in a browser on this same machine.</supermemory-status>`
     }));
     return;
   }

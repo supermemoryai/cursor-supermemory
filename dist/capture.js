@@ -27,14 +27,23 @@ import fs2 from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
-var CREDENTIALS_DIR = path.join(os.homedir(), ".supermemory-cursor");
-var CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "credentials.json");
+var AUTH_PORT = Number(process.env.SUPERMEMORY_AUTH_PORT) || 19878;
+var CALLBACK_URL = `http://localhost:${AUTH_PORT}/callback`;
 var AUTH_URL = process.env.SUPERMEMORY_AUTH_URL || "https://console.supermemory.ai/auth/connect";
+var configuredTimeout = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT);
+var LISTEN_TIMEOUT_MS = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 10 * 60000;
+function credentialsDir() {
+  return path.join(os.homedir(), ".supermemory-cursor");
+}
+function credentialsFile() {
+  return path.join(credentialsDir(), "credentials.json");
+}
 function loadCredentials() {
   try {
-    if (!fs.existsSync(CREDENTIALS_FILE))
+    const file = credentialsFile();
+    if (!fs.existsSync(file))
       return null;
-    const data = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, "utf-8"));
+    const data = JSON.parse(fs.readFileSync(file, "utf-8"));
     if (data.apiKey)
       return data;
     return null;
@@ -51,6 +60,7 @@ var DEFAULTS = {
   maxMemories: 10,
   maxProjectMemories: 5,
   injectProfile: true,
+  showRecallNotice: true,
   signalExtraction: false,
   signalKeywords: ["remember", "architecture", "decision", "bug", "fix"],
   signalTurnsBefore: 3,
@@ -93,6 +103,7 @@ function loadConfig(cwd) {
     maxMemories: merged.maxMemories,
     maxProjectMemories: merged.maxProjectMemories,
     injectProfile: merged.injectProfile,
+    showRecallNotice: merged.showRecallNotice !== false,
     signalExtraction: merged.signalExtraction,
     signalKeywords: Array.isArray(merged.signalKeywords) ? merged.signalKeywords.filter((keyword) => typeof keyword === "string") : DEFAULTS.signalKeywords,
     signalTurnsBefore: merged.signalTurnsBefore,
@@ -3582,8 +3593,8 @@ async function post(baseUrl, apiKey, path3, containerTag, body) {
   });
 }
 async function addMemory(baseUrl, apiKey, content, containerTag, metadata, options = {}, apiVersion) {
-  const version = resolveApiVersion(baseUrl, apiVersion);
-  const result = version === "v5" ? await sdkRequest(sdk(baseUrl, apiKey, containerTag).add(containerTag, {
+  const version2 = resolveApiVersion(baseUrl, apiVersion);
+  const result = version2 === "v5" ? await sdkRequest(sdk(baseUrl, apiKey, containerTag).add(containerTag, {
     content,
     id: options.customId,
     supportingContext: options.entityContext,
@@ -3603,7 +3614,7 @@ async function addMemory(baseUrl, apiKey, content, containerTag, metadata, optio
     customId: options.customId,
     entityContext: options.entityContext
   });
-  if (typeof result?.id !== "string" || !result.id.trim() || version === "v5" && ![
+  if (typeof result?.id !== "string" || !result.id.trim() || version2 === "v5" && ![
     "unknown",
     "queued",
     "extracting",

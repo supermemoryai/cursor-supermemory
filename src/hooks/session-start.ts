@@ -1,8 +1,9 @@
+import path from "node:path";
 import { loadConfig, getApiKey } from "../config.ts";
 import { getResolvedTags } from "../tags.ts";
 import { getProfiles, resolveApiVersion } from "../hook-api.ts";
 import { formatContainerDirective, formatSessionContext } from "../context.ts";
-import { pluginRootFromEnv, readStdinText } from "../runtime.ts";
+import { readStdinText } from "../runtime.ts";
 
 interface SessionStartInput {
   workspace_roots: string[];
@@ -20,13 +21,10 @@ async function main() {
   const config = loadConfig(workspaceRoot);
   const apiKey = getApiKey(config);
   if (!apiKey) {
-    const pluginRoot = pluginRootFromEnv();
-    const loginCmd = pluginRoot
-      ? `node "${pluginRoot}/dist/cli.js" login`
-      : "node dist/cli.js login";
+    const cli = path.join(path.dirname(process.argv[1] ?? "dist/session-start.js"), "cli.js");
     process.stdout.write(
       JSON.stringify({
-        additional_context: `<supermemory-status>Supermemory is not connected. Ask the user to run \`${loginCmd}\` before relying on persistent memory.</supermemory-status>`,
+        additional_context: `<supermemory-status>Supermemory is not connected. When the user wants memory, follow the memory-connect skill: run \`node "${cli}" login --no-wait\` and open the URL it prints in a browser on this same machine.</supermemory-status>`,
       }),
     );
     return;

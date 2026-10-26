@@ -77,8 +77,9 @@ async function forward(message: JsonRpcMessage, apiKey: string): Promise<void> {
   }
 }
 
+// Re-reads a missing key per request so a login finished mid-session works without a restart.
 export function startMcpProxy(): void {
-  const apiKey = getApiKey(loadConfig());
+  let apiKey = getApiKey(loadConfig());
   let queue = Promise.resolve();
   const lines = createInterface({ input: process.stdin });
 
@@ -93,11 +94,12 @@ export function startMcpProxy(): void {
     }
 
     queue = queue.then(async () => {
+      apiKey ||= getApiKey(loadConfig());
       if (!apiKey) {
         sendError(
           message.id,
           -32001,
-          "Supermemory is not authenticated. Run `cursor-supermemory login`, or set SUPERMEMORY_API_KEY.",
+          "Supermemory is not connected. Use the memory-connect skill (\"Sign me in to Supermemory\"), or set SUPERMEMORY_API_KEY.",
         );
         return;
       }

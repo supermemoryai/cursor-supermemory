@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Fix `login` dying before the browser could deliver the key on machines with no browser opener (`spawn xdg-open ENOENT`), which left Grok Bot's approval pointing at a closed port. The callback listener now runs in the background for 10 minutes, so agents get the URL back at once (`--wait` blocks; `--callback-url` finishes from an address the browser could not deliver).
+- Name the agent on the approval page: `--client grok_bot` (or Grok's own variables / a `~/.grok` install) shows Grok Bot instead of Cursor, and the device, OS, folder and plugin version replace "Unknown".
+- Add `memory-connect`, `memory-status` and `memory-disconnect` skills for hosts without slash commands, and locate the install on Cursor, Grok and Claude Code paths in every command.
+- Ask the agent to open replies that use recalled memory with `◪ Supermemory · recalled N memories` (`showRecallNotice`, on by default), and let the MCP proxy pick up a key saved mid-session.
+
 ## 1.2.3
 
 - Use the bundled official Supermemory 5.0.1 SDK for hosted REST profile, search and document capture, preserving existing namespace strings, metadata and incremental generation IDs.

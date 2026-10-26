@@ -90,7 +90,7 @@ test("answers with a JSON-RPC error when no credentials are available", async ()
     child.stdin.end();
     const response = JSON.parse(await new Response(child.stdout).text());
     expect(response.id).toBe(7);
-    expect(response.error.message).toContain("not authenticated");
+    expect(response.error.message).toContain("not connected");
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

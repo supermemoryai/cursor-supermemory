@@ -27,14 +27,23 @@ import fs2 from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
-var CREDENTIALS_DIR = path.join(os.homedir(), ".supermemory-cursor");
-var CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "credentials.json");
+var AUTH_PORT = Number(process.env.SUPERMEMORY_AUTH_PORT) || 19878;
+var CALLBACK_URL = `http://localhost:${AUTH_PORT}/callback`;
 var AUTH_URL = process.env.SUPERMEMORY_AUTH_URL || "https://console.supermemory.ai/auth/connect";
+var configuredTimeout = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT);
+var LISTEN_TIMEOUT_MS = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 10 * 60000;
+function credentialsDir() {
+  return path.join(os.homedir(), ".supermemory-cursor");
+}
+function credentialsFile() {
+  return path.join(credentialsDir(), "credentials.json");
+}
 function loadCredentials() {
   try {
-    if (!fs.existsSync(CREDENTIALS_FILE))
+    const file = credentialsFile();
+    if (!fs.existsSync(file))
       return null;
-    const data = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, "utf-8"));
+    const data = JSON.parse(fs.readFileSync(file, "utf-8"));
     if (data.apiKey)
       return data;
     return null;
@@ -51,6 +60,7 @@ var DEFAULTS = {
   maxMemories: 10,
   maxProjectMemories: 5,
   injectProfile: true,
+  showRecallNotice: true,
   signalExtraction: false,
   signalKeywords: ["remember", "architecture", "decision", "bug", "fix"],
   signalTurnsBefore: 3,
@@ -93,6 +103,7 @@ function loadConfig(cwd) {
     maxMemories: merged.maxMemories,
     maxProjectMemories: merged.maxProjectMemories,
     injectProfile: merged.injectProfile,
+    showRecallNotice: merged.showRecallNotice !== false,
     signalExtraction: merged.signalExtraction,
     signalKeywords: Array.isArray(merged.signalKeywords) ? merged.signalKeywords.filter((keyword) => typeof keyword === "string") : DEFAULTS.signalKeywords,
     signalTurnsBefore: merged.signalTurnsBefore,
@@ -4097,15 +4108,18 @@ function selectRecallResults(profiles, seenHashes, threshold = MIN_SIMILARITY) {
     ].slice(-MAX_SEEN_HASHES)
   };
 }
-function formatRecall(results, containerTag) {
+function formatRecall(results, containerTag, showNotice = false) {
   const lines = results.map((result) => {
     const text = resultText(result).slice(0, MAX_RESULT_CHARS);
     const title = result.title?.trim();
     const body = title && text !== title ? `${title} — ${text}` : text;
     return `- ◪ ${body}${result.filepath ? ` (${result.filepath})` : ""}`;
   });
+  const count = `${results.length} ${results.length === 1 ? "memory" : "memories"}`;
+  const notice = showNotice ? `
+Begin your reply to the user with this line on its own, so they can see Supermemory is working: ◪ Supermemory · recalled ${count}` : "";
   return `<supermemory-recall>
-Relevant memory for this turn. Every line marked ◪ came from Supermemory; use it when relevant and preserve the mark when attributing it.
+Relevant memory for this turn. Every line marked ◪ came from Supermemory; use it when relevant and preserve the mark when attributing it.${notice}
 Container: ${containerTag}
 
 ${lines.join(`
@@ -4132,7 +4146,7 @@ async function runPromptRecall(input) {
     const profiles = await getSearches(config.baseUrl, apiKey, tags.allReads, prompt.slice(0, MAX_QUERY_LENGTH), config.apiVersion);
     const { fresh, hashes } = selectRecallResults(profiles, state.seenHashes ?? [], Math.max(MIN_SIMILARITY, config.similarityThreshold));
     writeHookState(id, fresh.length > 0 ? {
-      pendingContext: formatRecall(fresh, tags.canonical),
+      pendingContext: formatRecall(fresh, tags.canonical, config.showRecallNotice),
       pendingGeneration: input.generation_id,
       seenHashes: hashes
     } : { pendingContext: undefined, pendingGeneration: undefined });

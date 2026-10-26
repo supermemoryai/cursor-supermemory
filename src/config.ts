@@ -24,6 +24,7 @@ export interface Config {
   maxMemories: number;
   maxProjectMemories: number;
   injectProfile: boolean;
+  showRecallNotice: boolean;
   signalExtraction: boolean;
   signalKeywords: string[];
   signalTurnsBefore: number;
@@ -38,6 +39,7 @@ const DEFAULTS: Omit<Config, "apiKey"> = {
   maxMemories: 10,
   maxProjectMemories: 5,
   injectProfile: true,
+  showRecallNotice: true,
   signalExtraction: false,
   signalKeywords: ["remember", "architecture", "decision", "bug", "fix"],
   signalTurnsBefore: 3,
@@ -87,6 +89,7 @@ export function loadConfig(cwd?: string): Config {
     maxMemories: merged.maxMemories,
     maxProjectMemories: merged.maxProjectMemories,
     injectProfile: merged.injectProfile,
+    showRecallNotice: merged.showRecallNotice !== false,
     signalExtraction: merged.signalExtraction,
     signalKeywords: Array.isArray(merged.signalKeywords)
       ? merged.signalKeywords.filter(

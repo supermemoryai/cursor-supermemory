@@ -32,20 +32,40 @@ import os from "node:os";
 import fs from "node:fs";
 import http from "node:http";
 import { spawn } from "node:child_process";
-var CREDENTIALS_DIR = path.join(os.homedir(), ".supermemory-cursor");
-var CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "credentials.json");
-var AUTH_PORT = 19878;
+// package.json
+var version = "1.2.3";
+
+// src/auth.ts
+var AUTH_PORT = Number(process.env.SUPERMEMORY_AUTH_PORT) || 19878;
+var CALLBACK_URL = `http://localhost:${AUTH_PORT}/callback`;
+var PENDING_MARKER = "supermemory-login";
 var AUTH_URL = process.env.SUPERMEMORY_AUTH_URL || "https://console.supermemory.ai/auth/connect";
-var SUCCESS_HTML = `<!DOCTYPE html>
-<html><head><style>
-  body { background: #111; color: #fff; font-family: system-ui; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-  h1 { font-size: 2rem; }
-</style></head><body><h1>Connected to Cursor!</h1></body></html>`;
+var configuredTimeout = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT);
+var LISTEN_TIMEOUT_MS = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 10 * 60000;
+var CLIENTS = {
+  cursor: { id: "cursor", name: "Cursor" },
+  grok_bot: { id: "grok_bot", name: "Grok Bot" }
+};
+var GROK_ENV = ["GROK_PLUGIN_ROOT", "GROK_SESSION_ID", "GROK_HOOK_EVENT", "GROK_WORKSPACE_ROOT"];
+function credentialsDir() {
+  return path.join(os.homedir(), ".supermemory-cursor");
+}
+function credentialsFile() {
+  return path.join(credentialsDir(), "credentials.json");
+}
+function page(title, message) {
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>${title} - Supermemory</title><style>
+  body { background: #111; color: #fff; font-family: system-ui; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+  h1 { font-size: 2rem; margin: 0 0 12px; } p { color: #aaa; }
+</style></head><body><h1>${title}</h1><p>${message}</p></body></html>`;
+}
 function loadCredentials() {
   try {
-    if (!fs.existsSync(CREDENTIALS_FILE))
+    const file = credentialsFile();
+    if (!fs.existsSync(file))
       return null;
-    const data = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, "utf-8"));
+    const data = JSON.parse(fs.readFileSync(file, "utf-8"));
     if (data.apiKey)
       return data;
     return null;
@@ -54,14 +74,15 @@ function loadCredentials() {
   }
 }
 function saveCredentials(apiKey) {
-  fs.mkdirSync(CREDENTIALS_DIR, { recursive: true, mode: 448 });
+  fs.mkdirSync(credentialsDir(), { recursive: true, mode: 448 });
   const data = { apiKey, createdAt: new Date().toISOString() };
-  fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(data, null, 2), { mode: 384 });
+  fs.writeFileSync(credentialsFile(), JSON.stringify(data, null, 2), { mode: 384 });
 }
 function clearCredentials() {
   try {
-    if (fs.existsSync(CREDENTIALS_FILE)) {
-      fs.unlinkSync(CREDENTIALS_FILE);
+    const file = credentialsFile();
+    if (fs.existsSync(file)) {
+      fs.unlinkSync(file);
       return true;
     }
     return false;
@@ -69,13 +90,54 @@ function clearCredentials() {
     return false;
   }
 }
+function detectClient(requested, env = process.env, entry = process.argv[1] ?? "") {
+  const key = requested?.trim().toLowerCase().replace(/[\s-]/g, "_");
+  if (key === "grok" || key === "grok_bot" || key === "grokbot")
+    return CLIENTS.grok_bot;
+  if (key === "cursor")
+    return CLIENTS.cursor;
+  const grokEnv = GROK_ENV.some((name) => !!env[name] && !env[name].includes("${"));
+  const grokInstall = entry.split(/[\\/]/).includes(".grok");
+  return grokEnv || grokInstall ? CLIENTS.grok_bot : CLIENTS.cursor;
+}
+function buildAuthUrl(client, cwd = process.cwd()) {
+  const url = new URL(AUTH_URL);
+  url.search = new URLSearchParams({
+    callback: CALLBACK_URL,
+    client: client.id,
+    hostname: `${client.name} - ${os.hostname()}`,
+    os: `${os.platform()} ${os.release()}`,
+    cwd,
+    cli_version: version
+  }).toString();
+  return url.toString();
+}
+function apiKeyFromCallbackUrl(value) {
+  try {
+    const url = new URL(value.trim());
+    const apiKey = url.searchParams.get("apikey") || url.searchParams.get("api_key");
+    return apiKey?.startsWith("sm_") ? apiKey : null;
+  } catch {
+    return null;
+  }
+}
 function openBrowser(url) {
   const platform = process.platform;
   const command = platform === "win32" ? "cmd" : platform === "darwin" ? "open" : "xdg-open";
   const args = platform === "win32" ? ["/c", "start", "", url] : [url];
-  spawn(command, args, { stdio: "ignore", detached: true }).unref();
+  spawn(command, args, { stdio: "ignore", detached: true }).on("error", () => {}).unref();
 }
-async function startAuthFlow(timeoutMs = 120000) {
+async function probeListener() {
+  try {
+    const response = await fetch(`http://127.0.0.1:${AUTH_PORT}/pending`, {
+      signal: AbortSignal.timeout(1000)
+    });
+    return await response.text() === PENDING_MARKER ? "ours" : "other";
+  } catch {
+    return "free";
+  }
+}
+function listenForCallback(client, timeoutMs = LISTEN_TIMEOUT_MS) {
   return new Promise((resolve) => {
     let settled = false;
     let timer;
@@ -90,42 +152,70 @@ async function startAuthFlow(timeoutMs = 120000) {
     };
     const server = http.createServer((req, res) => {
       const url = new URL(req.url ?? "/", `http://127.0.0.1:${AUTH_PORT}`);
+      if (url.pathname === "/pending") {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end(PENDING_MARKER);
+        return;
+      }
       if (url.pathname !== "/callback") {
         res.writeHead(404);
         res.end("Not found");
         return;
       }
-      const apiKey = url.searchParams.get("apikey") || url.searchParams.get("api_key");
-      if (!apiKey?.startsWith("sm_")) {
+      if (url.searchParams.get("error") === "user_cancelled") {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(page("Cancelled", "Supermemory was not connected. You can close this tab."), () => finish({ success: false, error: "Sign-in was cancelled" }));
+        return;
+      }
+      const apiKey = apiKeyFromCallbackUrl(url.toString());
+      if (!apiKey) {
         res.writeHead(400);
         res.end("Invalid API key");
         return;
       }
       saveCredentials(apiKey);
-      res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(SUCCESS_HTML);
-      finish({ success: true, apiKey });
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(page(`Connected to ${client.name}!`, "Supermemory is ready. You can close this tab."), () => finish({ success: true, apiKey }));
     });
     server.on("error", (error) => {
       const detail = error.code === "EADDRINUSE" ? `Port ${AUTH_PORT} is already in use` : error.message;
       finish({ success: false, error: detail });
     });
-    server.listen(AUTH_PORT, "127.0.0.1", () => {
-      const callbackUrl = `http://localhost:${AUTH_PORT}/callback`;
-      const authUrl = `${AUTH_URL}?callback=${encodeURIComponent(callbackUrl)}&client=cursor`;
-      process.stderr.write(`
-Open this URL to connect Supermemory to Cursor:
-
-  ${authUrl}
-
-Waiting...
-`);
-      openBrowser(authUrl);
-    });
+    server.listen(AUTH_PORT, "127.0.0.1");
     timer = setTimeout(() => {
       finish({ success: false, error: "Authentication timed out" });
     }, timeoutMs);
   });
+}
+async function beginLogin(client, cliPath) {
+  const url = buildAuthUrl(client);
+  let state = await probeListener();
+  if (state === "free") {
+    spawn(process.execPath, [cliPath, "login-listen", "--client", client.id], {
+      detached: true,
+      stdio: "ignore"
+    }).unref();
+    for (let i = 0;i < 25 && state !== "ours"; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      state = await probeListener();
+    }
+  }
+  if (state !== "ours") {
+    return { url, error: `Could not open the sign-in callback on port ${AUTH_PORT}` };
+  }
+  openBrowser(url);
+  return { url };
+}
+async function waitForCredentials(timeoutMs = LISTEN_TIMEOUT_MS) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (loadCredentials())
+      return true;
+    if (await probeListener() !== "ours")
+      return !!loadCredentials();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return false;
 }
 
 // src/config.ts
@@ -136,6 +226,7 @@ var DEFAULTS = {
   maxMemories: 10,
   maxProjectMemories: 5,
   injectProfile: true,
+  showRecallNotice: true,
   signalExtraction: false,
   signalKeywords: ["remember", "architecture", "decision", "bug", "fix"],
   signalTurnsBefore: 3,
@@ -178,6 +269,7 @@ function loadConfig(cwd) {
     maxMemories: merged.maxMemories,
     maxProjectMemories: merged.maxProjectMemories,
     injectProfile: merged.injectProfile,
+    showRecallNotice: merged.showRecallNotice !== false,
     signalExtraction: merged.signalExtraction,
     signalKeywords: Array.isArray(merged.signalKeywords) ? merged.signalKeywords.filter((keyword) => typeof keyword === "string") : DEFAULTS.signalKeywords,
     signalTurnsBefore: merged.signalTurnsBefore,
@@ -256,7 +348,7 @@ async function forward(message, apiKey) {
   }
 }
 function startMcpProxy() {
-  const apiKey = getApiKey(loadConfig());
+  let apiKey = getApiKey(loadConfig());
   let queue = Promise.resolve();
   const lines = createInterface({ input: process.stdin });
   lines.on("line", (line) => {
@@ -269,8 +361,9 @@ function startMcpProxy() {
       return;
     }
     queue = queue.then(async () => {
+      apiKey ||= getApiKey(loadConfig());
       if (!apiKey) {
-        sendError(message.id, -32001, "Supermemory is not authenticated. Run `cursor-supermemory login`, or set SUPERMEMORY_API_KEY.");
+        sendError(message.id, -32001, 'Supermemory is not connected. Use the memory-connect skill ("Sign me in to Supermemory"), or set SUPERMEMORY_API_KEY.');
         return;
       }
       try {
@@ -2082,10 +2175,10 @@ class ConnectorsClient {
     return HttpResponsePromise.fromPromise(this.__listAll(request, requestOptions));
   }
   async __listAll(request = {}, requestOptions) {
-    const { provider, page, limit } = request;
+    const { provider, page: page2, limit } = request;
     const _queryParams = {
       provider: provider != null ? provider : undefined,
-      page,
+      page: page2,
       limit
     };
     const _authRequest = await this._options.authProvider.getAuthRequest();
@@ -2131,10 +2224,10 @@ class ConnectorsClient {
     return HttpResponsePromise.fromPromise(this.__list(namespace, request, requestOptions));
   }
   async __list(namespace, request = {}, requestOptions) {
-    const { provider, page, limit } = request;
+    const { provider, page: page2, limit } = request;
     const _queryParams = {
       provider: provider != null ? provider : undefined,
-      page,
+      page: page2,
       limit
     };
     const _authRequest = await this._options.authProvider.getAuthRequest();
@@ -2994,9 +3087,9 @@ class NamespacesClient {
     return HttpResponsePromise.fromPromise(this.__list(request, requestOptions));
   }
   async __list(request = {}, requestOptions) {
-    const { page, limit } = request;
+    const { page: page2, limit } = request;
     const _queryParams = {
-      page,
+      page: page2,
       limit
     };
     const _authRequest = await this._options.authProvider.getAuthRequest();
@@ -3582,9 +3675,9 @@ class SupermemoryClient {
     return HttpResponsePromise.fromPromise(this.__list(namespace, type, request, requestOptions));
   }
   async __list(namespace, type, request = {}, requestOptions) {
-    const { page, limit, sort, order, ..._body } = request;
+    const { page: page2, limit, sort, order, ..._body } = request;
     const _queryParams = {
-      page,
+      page: page2,
       limit,
       sort: sort != null ? sort : undefined,
       order: order != null ? order : undefined
@@ -4161,6 +4254,14 @@ function writeGlobalMcpEntry(cliPath, configPath = GLOBAL_MCP_PATH) {
 
 // src/cli.ts
 var command = process.argv[2];
+var args = process.argv.slice(3);
+function flag(name) {
+  return args.includes(name);
+}
+function option(name) {
+  const index = args.indexOf(name);
+  return index >= 0 ? args[index + 1] : undefined;
+}
 switch (command) {
   case "mcp":
     startMcpProxy();
@@ -4172,20 +4273,49 @@ switch (command) {
     break;
   }
   case "login": {
-    const existing = loadCredentials();
-    if (existing) {
+    const callbackUrl = option("--callback-url");
+    if (callbackUrl) {
+      const apiKey = apiKeyFromCallbackUrl(callbackUrl);
+      if (!apiKey) {
+        console.error("That address has no Supermemory key in it.");
+        process.exit(1);
+      }
+      saveCredentials(apiKey);
+      console.log("Authenticated successfully.");
+      break;
+    }
+    if (loadCredentials()) {
       console.log("Already authenticated. Use `logout` first to re-authenticate.");
       process.exit(0);
     }
-    console.log("Opening browser to authenticate...");
-    const result = await startAuthFlow();
-    if (result.success) {
+    const client = detectClient(option("--client"));
+    const { url, error } = await beginLogin(client, fileURLToPath(import.meta.url));
+    if (error) {
+      console.error(`Authentication failed: ${error}`);
+      process.exit(1);
+    }
+    const minutes = Math.round(LISTEN_TIMEOUT_MS / 60000);
+    console.log(`Open this URL to connect Supermemory to ${client.name}:
+
+  ${url}
+`);
+    const wait = flag("--wait") || !flag("--no-wait") && !!process.stdout.isTTY;
+    if (!wait) {
+      console.log(`The sign-in stays open for ${minutes} minutes. After approving, run \`status\` to confirm.`);
+      break;
+    }
+    console.log("Waiting...");
+    if (await waitForCredentials()) {
       console.log("Authenticated successfully.");
     } else {
-      console.error(`Authentication failed: ${result.error}`);
+      console.error("Authentication failed: the sign-in closed before it was approved.");
       process.exit(1);
     }
     break;
+  }
+  case "login-listen": {
+    const result = await listenForCallback(detectClient(option("--client")));
+    process.exit(result.success ? 0 : 1);
   }
   case "logout": {
     const removed = clearCredentials();
@@ -4196,7 +4326,7 @@ switch (command) {
     const config = loadConfig();
     const apiKey = getApiKey(config);
     if (!apiKey) {
-      console.log("Not authenticated. Run `cursor-supermemory login` to connect.");
+      console.log("Not authenticated. Run `login` to connect.");
       break;
     }
     const credentials = loadCredentials();
@@ -4220,7 +4350,10 @@ switch (command) {
 Commands:
   mcp          Proxy the hosted Supermemory MCP server over stdio
   mcp-install  Register the MCP server in ~/.cursor/mcp.json with an absolute path
-  login        Authenticate with Supermemory
+  login        Authenticate with Supermemory in the browser
+                 --client cursor|grok_bot   Name the agent on the approval page
+                 --no-wait / --wait         Return at once, or block until approved
+                 --callback-url <url>       Finish from a callback the browser could not deliver
   logout       Remove stored credentials
   status       Show authentication status`);
     if (command)

@@ -11,12 +11,19 @@ Open **Customize** in Cursor, find **Supermemory**, select **Install**, and choo
 Connect your Supermemory account:
 
 ```bash
-node "$(ls -d ~/.cursor/plugins/local/cursor-supermemory ~/.cursor/plugins/cache/*/cursor-supermemory/*/ 2>/dev/null | head -1)/dist/cli.js" login
+node -e 'const f=require("fs"),p=require("path"),h=require("os").homedir(),e=process.env;const ok=d=>{try{return JSON.parse(f.readFileSync(p.join(d,"package.json"),"utf8")).name==="cursor-supermemory"&&f.existsSync(p.join(d,"dist","cli.js"))}catch{return false}};const ls=d=>{try{return f.readdirSync(d).filter(x=>x!=="node_modules"&&x!==".git").map(x=>p.join(d,x))}catch{return[]}};let t=[e.CURSOR_PLUGIN_ROOT,e.CLAUDE_PLUGIN_ROOT,e.GROK_PLUGIN_ROOT].find(v=>v&&!v.includes("${")&&ok(v));let g=[".cursor/plugins",".grok/installed-plugins",".grok/plugins",".claude/plugins"].map(x=>p.join(h,x));for(let i=0;i<4&&!t;i++){g=g.flatMap(ls);t=g.find(ok)}if(!t){console.error("Supermemory plugin not found");process.exit(1)}require("child_process").spawn(process.execPath,[p.join(t,"dist","cli.js"),...process.argv.slice(1)],{stdio:"inherit"}).on("exit",c=>process.exit(c??1))' login
 ```
 
 Every host names the install path after itself — Cursor sets `CURSOR_PLUGIN_ROOT`,
 Claude Code and Grok set `CLAUDE_PLUGIN_ROOT`, Grok also sets `GROK_PLUGIN_ROOT` —
-so the command above finds the install itself and works from any directory.
+so the command above checks those, then the usual plugin directories for this
+package, and works from any directory.
+
+`login` keeps its callback listener open for 10 minutes in the background, so it
+returns as soon as it prints the URL when run by an agent (`--wait` blocks until you
+approve; that is the default in an interactive terminal). Approve in a browser on the
+same machine. If the browser cannot reach `localhost:19878`, finish with
+`login --callback-url '<the address it tried to open>'`.
 
 ### Upgrade channels
 
@@ -27,7 +34,7 @@ The published npm **1.0.0** package is a different, older product with a local M
 ## What it does
 
 - **Session context** — loads your persistent profile when a Cursor conversation starts
-- **Automatic recall** — searches on substantive prompts, deduplicates results, and injects them after the first tool result supported by Cursor
+- **Automatic recall** — searches on substantive prompts, deduplicates results, and injects them after the first tool result supported by Cursor. The agent opens its reply with `◪ Supermemory · recalled N memories`, since Cursor-format hosts have no other notice surface
 - **Incremental capture** — saves each completed turn and retries unsaved transcript deltas at session end
 - **MCP tools** — the hosted Supermemory tools, proxied over stdio for explicit memory control
 - **Context gatherer** — fans out targeted searches before substantial work
@@ -74,6 +81,10 @@ run the `/supermemory-config` command.
 | `/supermemory-setup` | Connect Supermemory to Cursor |
 | `/supermemory-status` | Check authentication and live connectivity |
 | `/supermemory-logout` | Disconnect Supermemory from Cursor |
+
+Hosts without slash commands, such as Grok Bot, use the matching skills instead:
+`memory-connect` ("Sign me in to Supermemory"), `memory-status` ("Is Supermemory
+connected?") and `memory-disconnect` ("Disconnect Supermemory").
 
 ## Configuration
 
@@ -135,6 +146,7 @@ Per-workspace overrides. Add to `.gitignore` if it contains an API key. Project 
 | `maxMemories` | Max project memories injected at session start | `10` |
 | `maxProjectMemories` | Max project memories injected at session start | `5` |
 | `injectProfile` | Whether to inject user profile at session start | `true` |
+| `showRecallNotice` | Ask the agent to open replies that use recalled memory with `◪ Supermemory · recalled N memories` | `true` |
 | `signalExtraction` | Capture only turns containing durable-signal keywords | `false` |
 | `signalKeywords` | Keywords that trigger signal-based capture | `remember`, `architecture`, `decision`, `bug`, `fix` |
 | `signalTurnsBefore` | Number of nearby turns retained around a signal | `3` |
@@ -205,6 +217,10 @@ nothing to it. Hooks fail open when no root resolves; the MCP entry reports it.
 
 Cloud Agents have no browser for the login flow, so set `SUPERMEMORY_API_KEY` in the
 agent environment. That is the only required Cloud Agent step.
+
+Grok Bot has its own browser on its computer. Ask it to "Sign me in to Supermemory":
+the `memory-connect` skill runs `login --client grok_bot`, so the approval page
+names Grok Bot, and the Bot opens the URL in that browser, where you approve it.
 
 If an environment installs the plugin somewhere else entirely — none of those
 directories and no usable plugin root — run this from the plugin directory to
