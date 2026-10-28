@@ -36,7 +36,6 @@ Grok Bot makes connectors account-wide, so other Bots could still call Supermemo
 | `setup-prompt.md` | Paste into an empty Bot to turn it into the Supermemory Bot |
 | `build-prompt.md` | Paste into any Bot: it creates the Supermemory Bot, writes the setup to a file and sends it a short pointer (Bot-to-Bot messages are cut at 8,000 characters) |
 | `update-prompt.md` | Paste into an existing Supermemory Bot to move it to this version |
-| `retired-notes.json` | Exact text of the previous memory notes, so the update can forget them |
 
 Edit `profile.json` or the skills, then run `python3 build.py`.
 
