@@ -18,11 +18,16 @@ Every host names the install path after itself — Cursor sets `CURSOR_PLUGIN_RO
 Claude Code and Grok set `CLAUDE_PLUGIN_ROOT`, Grok also sets `GROK_PLUGIN_ROOT` —
 so the command above finds the install itself and works from any directory.
 
+`login` signs in through OAuth in your browser (dynamic client registration with PKCE, callback on
+`127.0.0.1:19879`) and stores rotating tokens in `~/.supermemory-cursor/credentials.json`. An API key
+from `SUPERMEMORY_API_KEY` or config still takes precedence, and a previously saved API key keeps
+working until you run `login` again. `logout` revokes the refresh token and removes the credentials.
+
 ### Upgrade channels
 
-This repository's **1.2.3 plugin-panel/Git distribution** uses the hosted MCP proxy and SDK-backed v5 REST hooks. Existing plugin-panel installations can update in Cursor and reload the window; an isolated Git/local installation can replace its plugin directory with this version. Keep your existing global/project config, credentials and hook-state files. The update does not rewrite them or upload historical transcripts. Existing container-tag strings are used unchanged as v5 namespaces, with canonical and legacy reads retained.
+This repository's **1.3.0 plugin-panel/Git distribution** uses the hosted MCP proxy and SDK-backed v5 REST hooks. Existing plugin-panel installations can update in Cursor and reload the window; an isolated Git/local installation can replace its plugin directory with this version. Keep your existing global/project config, credentials and hook-state files. The update does not rewrite them or upload historical transcripts. Existing container-tag strings are used unchanged as v5 namespaces, with canonical and legacy reads retained.
 
-The published npm **1.0.0** package is a different, older product with a local MCP server, different tools and installation wiring. This change does **not** publish 1.2.3 over that package or promise an in-place npm upgrade. npm users should retain their current install until a dedicated upgrade is available, or explicitly install the plugin-panel version alongside it, disable the old npm hook/MCP registration to avoid duplicate capture, and retain the old package/config as a rollback. Existing namespace overrides should be copied with their exact values only after reviewing the different config paths below; no automated conversion of the npm product is included.
+The published npm **1.0.0** package is a different, older product with a local MCP server, different tools and installation wiring. This change does **not** publish 1.3.0 over that package or promise an in-place npm upgrade. npm users should retain their current install until a dedicated upgrade is available, or explicitly install the plugin-panel version alongside it, disable the old npm hook/MCP registration to avoid duplicate capture, and retain the old package/config as a rollback. Existing namespace overrides should be copied with their exact values only after reviewing the different config paths below; no automated conversion of the npm product is included.
 
 ## What it does
 
@@ -85,7 +90,8 @@ run the `/supermemory-config` command.
 | `SUPERMEMORY_API_URL` | Override the Supermemory API base URL |
 | `SUPERMEMORY_BASE_URL` | API base URL fallback when `SUPERMEMORY_API_URL` is unset |
 | `SUPERMEMORY_API_VERSION` | Explicit `v5` or `legacy` REST contract; overrides config `apiVersion` |
-| `SUPERMEMORY_MCP_URL` | Independent hosted MCP proxy endpoint; REST version selection does not change it |
+| `SUPERMEMORY_MCP_URL` | Independent hosted MCP proxy endpoint and OAuth resource; REST version selection does not change it. Required for OAuth on a custom API URL that is not an `api.*` host |
+| `SUPERMEMORY_OAUTH_ISSUER` | OAuth issuer (default `<API URL>/api/auth`) |
 | `SUPERMEMORY_REPO_TAG` | Override the unified repository container tag |
 | `SUPERMEMORY_USER_TAG` | Legacy Cursor personal container to continue reading |
 | `SUPERMEMORY_PROJECT_TAG` | Legacy Cursor project container to continue reading |

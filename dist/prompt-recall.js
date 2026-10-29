@@ -16,7 +16,7 @@ var __export = (target, all) => {
 var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // src/hooks/prompt-recall.ts
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 
 // src/config.ts
 import path2 from "node:path";
@@ -27,23 +27,253 @@ import fs2 from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 var CREDENTIALS_DIR = path.join(os.homedir(), ".supermemory-cursor");
 var CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "credentials.json");
-var AUTH_URL = process.env.SUPERMEMORY_AUTH_URL || "https://console.supermemory.ai/auth/connect";
-function loadCredentials() {
+var CLIENT_FILE = path.join(CREDENTIALS_DIR, "oauth-client.json");
+var LOCK_FILE = path.join(CREDENTIALS_DIR, "auth.lock");
+var AUTH_PORT = 19879;
+var REDIRECT_URI = `http://127.0.0.1:${AUTH_PORT}/callback`;
+var REFRESH_TIMEOUT = 3000;
+var REFRESH_REQUEST_TIMEOUT = 1e4;
+var REFRESH_SKEW = 60000;
+var configuredAuthTimeout = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT);
+var AUTH_TIMEOUT = Number.isFinite(configuredAuthTimeout) && configuredAuthTimeout > 0 ? configuredAuthTimeout : 5 * 60000;
+function page(title, message) {
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>${title} - Supermemory</title><style>
+  body { background: #111; color: #fff; font-family: system-ui; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+  h1 { font-size: 2rem; margin: 0 0 12px; } p { color: #aaa; }
+</style></head><body><h1>${title}</h1><p>${message}</p></body></html>`;
+}
+var SUCCESS_HTML = page("Connected to Cursor!", "You can close this tab and return to Cursor.");
+var DENIED_HTML = page("Authorization denied", "Supermemory was not connected. Return to Cursor and run login again to retry.");
+var FAILED_HTML = page("Connection failed", "Return to Cursor and run login again.");
+
+class AuthError extends Error {
+  code;
+  constructor(message, code) {
+    super(message);
+    this.code = code;
+  }
+}
+function authRequired() {
+  return new AuthError("Supermemory authentication required. Run `cursor-supermemory login`, or set SUPERMEMORY_API_KEY.", "AUTH_REQUIRED");
+}
+function readJson(file) {
   try {
-    if (!fs.existsSync(CREDENTIALS_FILE))
-      return null;
-    const data = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, "utf-8"));
-    if (data.apiKey)
-      return data;
-    return null;
+    const value = JSON.parse(fs.readFileSync(file, "utf-8"));
+    return value && typeof value === "object" && !Array.isArray(value) ? value : null;
   } catch {
     return null;
   }
 }
+function loadCredentialData() {
+  const data = readJson(CREDENTIALS_FILE);
+  return data?.type === "oauth" || data?.apiKey ? data : null;
+}
+function loadCredentials() {
+  const data = loadCredentialData();
+  return data?.type === "oauth" ? undefined : data?.apiKey;
+}
+function writeJson(file, data) {
+  fs.mkdirSync(CREDENTIALS_DIR, { recursive: true, mode: 448 });
+  fs.chmodSync(CREDENTIALS_DIR, 448);
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporary, JSON.stringify(data, null, 2), { mode: 384, flag: "wx" });
+    fs.renameSync(temporary, file);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
+}
+function recoverAbandonedLock() {
+  let recovery;
+  let linked = false;
+  try {
+    const original = fs.statSync(LOCK_FILE);
+    recovery = `${LOCK_FILE}.${original.dev}.${original.ino}.recovery`;
+    fs.linkSync(LOCK_FILE, recovery);
+    linked = true;
+    const snapshot = fs.statSync(recovery);
+    if (snapshot.ino !== original.ino || snapshot.dev !== original.dev)
+      return;
+    const owner = readJson(recovery);
+    let abandoned = false;
+    if (owner && Number.isInteger(owner.pid) && owner.pid > 0) {
+      try {
+        process.kill(owner.pid, 0);
+      } catch (error) {
+        abandoned = error.code === "ESRCH";
+      }
+    } else {
+      abandoned = Date.now() - snapshot.mtimeMs > 10 * 60000;
+    }
+    if (abandoned) {
+      const current = fs.statSync(LOCK_FILE);
+      if (current.ino === original.ino && current.dev === original.dev)
+        fs.unlinkSync(LOCK_FILE);
+    }
+  } catch (error) {
+    if (!["ENOENT", "EEXIST"].includes(error.code ?? ""))
+      throw error;
+  } finally {
+    if (linked && recovery)
+      fs.rmSync(recovery, { force: true });
+  }
+}
+async function withAuthLock(action, timeoutMs) {
+  fs.mkdirSync(CREDENTIALS_DIR, { recursive: true, mode: 448 });
+  const deadline = Date.now() + timeoutMs;
+  let descriptor;
+  while (descriptor === undefined) {
+    try {
+      descriptor = fs.openSync(LOCK_FILE, "wx", 384);
+    } catch (error) {
+      if (error.code !== "EEXIST")
+        throw error;
+      recoverAbandonedLock();
+      if (Date.now() >= deadline)
+        throw new Error("Supermemory authentication is busy. Try again.");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+  try {
+    fs.writeFileSync(descriptor, JSON.stringify({ pid: process.pid }));
+    return await action(Math.max(1, deadline - Date.now()));
+  } finally {
+    fs.closeSync(descriptor);
+    fs.rmSync(LOCK_FILE, { force: true });
+  }
+}
+function secureUrl(value) {
+  const url = new URL(value);
+  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  if (url.username || url.password || url.hash || url.search || url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+    throw new Error("OAuth requires HTTPS (HTTP is allowed only for loopback development).");
+  }
+  return url.toString().replace(/\/+$/, "");
+}
+function getOAuthConfig(baseUrl, mcpUrl) {
+  const apiBaseUrl = secureUrl(baseUrl);
+  return {
+    apiBaseUrl,
+    issuer: secureUrl(process.env.SUPERMEMORY_OAUTH_ISSUER || `${apiBaseUrl}/api/auth`),
+    resource: secureUrl(mcpUrl)
+  };
+}
+function sameConfig(credentials, config) {
+  return credentials?.apiBaseUrl === config.apiBaseUrl && credentials?.issuer === config.issuer && credentials?.resource === config.resource;
+}
+function hasOAuthCredentials(config) {
+  const credentials = loadCredentialData();
+  return credentials?.type === "oauth" && sameConfig(credentials, config) && (!!credentials.refreshToken || !!credentials.accessToken && credentials.expiresAt > Date.now() + REFRESH_SKEW);
+}
+function issuerEndpoint(value, issuer) {
+  const endpoint = secureUrl(value);
+  if (new URL(endpoint).origin !== new URL(issuer).origin) {
+    throw new Error("OAuth endpoint does not belong to the configured issuer.");
+  }
+  return endpoint;
+}
+async function oauthRequest(url, options) {
+  const response = await fetch(url, { ...options, redirect: "error" });
+  const body = await response.json().catch(() => null);
+  const data = body && typeof body === "object" ? body : {};
+  if (!response.ok) {
+    const code = ["invalid_grant", "invalid_client", "access_denied"].includes(String(data.error)) ? String(data.error) : "oauth_request_failed";
+    throw new AuthError(`Supermemory authorization failed (${code}, HTTP ${response.status}).`, code);
+  }
+  return data;
+}
+async function exchangeToken(client, parameters, signal, previous) {
+  const data = await oauthRequest(issuerEndpoint(client.tokenEndpoint, client.issuer), {
+    method: "POST",
+    signal,
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: client.clientId,
+      resource: client.resource,
+      ...parameters
+    })
+  });
+  const refreshToken = data.refresh_token ?? previous?.refreshToken;
+  if (typeof data.access_token !== "string" || !data.access_token || typeof data.token_type !== "string" || data.token_type.toLowerCase() !== "bearer" || typeof data.expires_in !== "number" || !Number.isFinite(data.expires_in) || data.expires_in <= 0 || typeof refreshToken !== "string" || !refreshToken) {
+    throw new Error("OAuth returned an invalid token response.");
+  }
+  signal.throwIfAborted();
+  const credentials = {
+    type: "oauth",
+    apiBaseUrl: client.apiBaseUrl,
+    issuer: client.issuer,
+    resource: client.resource,
+    clientId: client.clientId,
+    redirectUri: client.redirectUri,
+    authorizationEndpoint: client.authorizationEndpoint,
+    tokenEndpoint: client.tokenEndpoint,
+    revocationEndpoint: client.revocationEndpoint,
+    accessToken: data.access_token,
+    refreshToken,
+    expiresAt: Date.now() + data.expires_in * 1000,
+    savedAt: new Date().toISOString()
+  };
+  writeJson(CREDENTIALS_FILE, credentials);
+  return data.access_token;
+}
+var pendingRefresh = null;
+function refreshCredentials(config) {
+  if (pendingRefresh)
+    return pendingRefresh;
+  const refresh = withAuthLock(async (remaining) => {
+    const credentials = loadCredentialData();
+    if (credentials?.type !== "oauth" || !sameConfig(credentials, config))
+      throw authRequired();
+    if (credentials.accessToken && credentials.expiresAt > Date.now() + REFRESH_SKEW)
+      return credentials.accessToken;
+    if (!credentials.refreshToken)
+      throw authRequired();
+    try {
+      return await exchangeToken(credentials, { grant_type: "refresh_token", refresh_token: credentials.refreshToken }, AbortSignal.timeout(remaining), credentials);
+    } catch (error) {
+      if (error instanceof AuthError && ["invalid_grant", "invalid_client"].includes(error.code)) {
+        const { accessToken: _access, refreshToken: _refresh, ...registration } = credentials;
+        writeJson(CREDENTIALS_FILE, registration);
+        if (error.code === "invalid_client")
+          fs.rmSync(CLIENT_FILE, { force: true });
+        throw authRequired();
+      }
+      throw error;
+    }
+  }, REFRESH_REQUEST_TIMEOUT).finally(() => {
+    pendingRefresh = null;
+  });
+  refresh.catch(() => {});
+  pendingRefresh = refresh;
+  return refresh;
+}
+function waitFor(promise, timeoutMs) {
+  let timer;
+  const expired = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new AuthError("Supermemory token refresh is still in progress.", "AUTH_PENDING");
+      error.name = "TimeoutError";
+      reject(error);
+    }, timeoutMs);
+  });
+  return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
+}
+async function getAccessToken(config, timeoutMs = REFRESH_TIMEOUT) {
+  const saved = loadCredentialData();
+  if (saved?.type !== "oauth" || !sameConfig(saved, config))
+    throw authRequired();
+  if (saved.accessToken && saved.expiresAt > Date.now() + REFRESH_SKEW)
+    return saved.accessToken;
+  return waitFor(refreshCredentials(config), timeoutMs);
+}
 
 // src/config.ts
+var DEFAULT_API_URL = "https://api.supermemory.ai";
+var DEFAULT_MCP_URL = "https://mcp.supermemory.ai/mcp";
 var GLOBAL_CONFIG_PATH = path2.join(os2.homedir(), ".config", "cursor", "supermemory.json");
 var DEFAULTS = {
   baseUrl: null,
@@ -58,7 +288,7 @@ var DEFAULTS = {
   userContainerTag: null,
   projectContainerTag: null
 };
-function readJson(filePath) {
+function readJson2(filePath) {
   try {
     if (!fs2.existsSync(filePath))
       return null;
@@ -71,7 +301,7 @@ function findProjectConfig(cwd) {
   let dir = cwd;
   while (true) {
     const configPath = path2.join(dir, ".cursor", ".supermemory", "config.json");
-    const data = readJson(configPath);
+    const data = readJson2(configPath);
     if (data)
       return data;
     const parent = path2.dirname(dir);
@@ -83,7 +313,7 @@ function findProjectConfig(cwd) {
 }
 function loadConfig(cwd) {
   const projectConfig = findProjectConfig(cwd || process.cwd());
-  const globalConfig = readJson(GLOBAL_CONFIG_PATH);
+  const globalConfig = readJson2(GLOBAL_CONFIG_PATH);
   const merged = { ...DEFAULTS, ...globalConfig, ...projectConfig };
   return {
     apiKey: process.env.SUPERMEMORY_API_KEY ?? merged.apiKey ?? null,
@@ -104,12 +334,58 @@ function loadConfig(cwd) {
 function getApiKey(config) {
   if (config.apiKey)
     return config.apiKey;
-  const creds = loadCredentials();
-  return creds?.apiKey ?? null;
+  return loadCredentials() ?? null;
+}
+function getApiBaseUrl(config) {
+  return config.baseUrl || DEFAULT_API_URL;
+}
+function normalizeUrl(value) {
+  try {
+    const url = new URL(value.trim());
+    return ["http:", "https:"].includes(url.protocol) ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+function getMcpUrl(config) {
+  if (process.env.SUPERMEMORY_MCP_URL) {
+    const configured = normalizeUrl(process.env.SUPERMEMORY_MCP_URL);
+    if (!configured)
+      throw new Error("Invalid SUPERMEMORY_MCP_URL");
+    return configured;
+  }
+  if (!config.baseUrl)
+    return DEFAULT_MCP_URL;
+  const api = new URL(config.baseUrl);
+  if (api.hostname.startsWith("api.")) {
+    api.hostname = api.hostname.replace(/^api\./, "mcp.");
+    api.pathname = "/mcp";
+    api.search = "";
+    api.hash = "";
+    return api.toString();
+  }
+  throw new Error("Set SUPERMEMORY_MCP_URL for OAuth or MCP on a custom Supermemory backend.");
+}
+function isConfigured(config) {
+  if (getApiKey(config))
+    return true;
+  try {
+    return hasOAuthCredentials(getOAuthConfig(getApiBaseUrl(config), getMcpUrl(config)));
+  } catch {
+    return false;
+  }
+}
+async function getAuthToken(config, timeoutMs) {
+  const apiKey = getApiKey(config);
+  if (apiKey)
+    return apiKey;
+  if (loadCredentialData()?.type !== "oauth")
+    throw authRequired();
+  return getAccessToken(getOAuthConfig(getApiBaseUrl(config), getMcpUrl(config)), timeoutMs);
 }
 
 // src/hook-api.ts
-import { createHash, createHmac } from "node:crypto";
+import { createHash as createHash2, createHmac } from "node:crypto";
 
 // node_modules/supermemory/dist/esm/generated/core/auth/AuthProvider.js
 function isAuthProvider(value) {
@@ -1904,10 +2180,10 @@ class ConnectorsClient {
     return HttpResponsePromise.fromPromise(this.__listAll(request, requestOptions));
   }
   async __listAll(request = {}, requestOptions) {
-    const { provider, page, limit } = request;
+    const { provider, page: page2, limit } = request;
     const _queryParams = {
       provider: provider != null ? provider : undefined,
-      page,
+      page: page2,
       limit
     };
     const _authRequest = await this._options.authProvider.getAuthRequest();
@@ -1953,10 +2229,10 @@ class ConnectorsClient {
     return HttpResponsePromise.fromPromise(this.__list(namespace, request, requestOptions));
   }
   async __list(namespace, request = {}, requestOptions) {
-    const { provider, page, limit } = request;
+    const { provider, page: page2, limit } = request;
     const _queryParams = {
       provider: provider != null ? provider : undefined,
-      page,
+      page: page2,
       limit
     };
     const _authRequest = await this._options.authProvider.getAuthRequest();
@@ -2816,9 +3092,9 @@ class NamespacesClient {
     return HttpResponsePromise.fromPromise(this.__list(request, requestOptions));
   }
   async __list(request = {}, requestOptions) {
-    const { page, limit } = request;
+    const { page: page2, limit } = request;
     const _queryParams = {
-      page,
+      page: page2,
       limit
     };
     const _authRequest = await this._options.authProvider.getAuthRequest();
@@ -3404,9 +3680,9 @@ class SupermemoryClient {
     return HttpResponsePromise.fromPromise(this.__list(namespace, type, request, requestOptions));
   }
   async __list(namespace, type, request = {}, requestOptions) {
-    const { page, limit, sort, order, ..._body } = request;
+    const { page: page2, limit, sort, order, ..._body } = request;
     const _queryParams = {
-      page,
+      page: page2,
       limit,
       sort: sort != null ? sort : undefined,
       order: order != null ? order : undefined
@@ -3500,7 +3776,6 @@ class Supermemory extends SupermemoryClient {
 }
 
 // src/hook-api.ts
-var DEFAULT_BASE_URL = "https://api.supermemory.ai";
 var REQUEST_TIMEOUT_MS = 3000;
 var INTEGRITY_VERSION = 1;
 var SEED = "7f2a9c4b8e1d6f3a5c0b9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a";
@@ -3512,16 +3787,20 @@ function resolveApiVersion(baseUrl, apiVersion) {
   }
   let url;
   try {
-    url = new URL(baseUrl || DEFAULT_BASE_URL);
+    url = new URL(baseUrl || DEFAULT_API_URL);
   } catch {
     throw new Error("Supermemory API base URL is invalid");
   }
-  return url.origin === DEFAULT_BASE_URL && /^\/*$/.test(url.pathname) && !url.username && !url.password && !url.search && !url.hash ? "v5" : "legacy";
+  return url.origin === DEFAULT_API_URL && /^\/*$/.test(url.pathname) && !url.username && !url.password && !url.search && !url.hash ? "v5" : "legacy";
 }
-function sdk(baseUrl, apiKey, tag) {
+function resolveAuth(auth2) {
+  return typeof auth2 === "function" ? auth2() : Promise.resolve(auth2);
+}
+async function sdk(baseUrl, auth2, tag) {
+  const apiKey = await resolveAuth(auth2);
   return new Supermemory({
     apiKey,
-    baseUrl: (baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, ""),
+    baseUrl: (baseUrl || DEFAULT_API_URL).replace(/\/+$/, ""),
     headers: headers(apiKey, tag),
     timeoutInSeconds: REQUEST_TIMEOUT_MS / 1000,
     maxRetries: 0
@@ -3536,7 +3815,7 @@ async function sdkRequest(request) {
   }
 }
 function sha256(input) {
-  return createHash("sha256").update(input).digest("hex");
+  return createHash2("sha256").update(input).digest("hex");
 }
 function headers(apiKey, containerTag) {
   const contentHash = sha256(containerTag);
@@ -3550,8 +3829,9 @@ function headers(apiKey, containerTag) {
     "x-sm-source": "cursor"
   };
 }
-async function post(baseUrl, apiKey, path3, containerTag, body) {
-  const response = await fetch(`${(baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, "")}${path3}`, {
+async function post(baseUrl, auth2, path3, containerTag, body) {
+  const apiKey = await resolveAuth(auth2);
+  const response = await fetch(`${(baseUrl || DEFAULT_API_URL).replace(/\/+$/, "")}${path3}`, {
     method: "POST",
     headers: headers(apiKey, containerTag),
     body: JSON.stringify(body),
@@ -3566,9 +3846,9 @@ async function post(baseUrl, apiKey, path3, containerTag, body) {
     throw new Error("Supermemory returned an invalid response");
   });
 }
-async function getProfile(baseUrl, apiKey, containerTag, query, scope, apiVersion) {
+async function getProfile(baseUrl, auth2, containerTag, query, scope, apiVersion) {
   if (resolveApiVersion(baseUrl, apiVersion) === "v5") {
-    const client = sdk(baseUrl, apiKey, containerTag);
+    const client = await sdk(baseUrl, auth2, containerTag);
     const options = {
       abortSignal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       maxRetries: 0
@@ -3576,11 +3856,11 @@ async function getProfile(baseUrl, apiKey, containerTag, query, scope, apiVersio
     const body = scope ? { filter: { field: "sm_scope", operator: "eq", value: scope } } : {};
     const [profile, searchResults] = await Promise.all([
       sdkRequest(client.profile(containerTag, body, options)),
-      query ? searchMemories(baseUrl, apiKey, containerTag, query, scope, "v5", options.abortSignal) : undefined
+      query ? searchMemories(baseUrl, auth2, containerTag, query, scope, "v5", options.abortSignal) : undefined
     ]);
     return { ...profile, ...searchResults ? { searchResults } : {} };
   }
-  return post(baseUrl, apiKey, "/v4/profile", containerTag, {
+  return post(baseUrl, auth2, "/v4/profile", containerTag, {
     containerTag,
     ...query ? { q: query } : {},
     ...scope ? {
@@ -3590,11 +3870,12 @@ async function getProfile(baseUrl, apiKey, containerTag, query, scope, apiVersio
     } : {}
   });
 }
-async function searchMemories(baseUrl, apiKey, containerTag, query, scope, apiVersion, abortSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS)) {
+async function searchMemories(baseUrl, auth2, containerTag, query, scope, apiVersion, abortSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS)) {
   if (resolveApiVersion(baseUrl, apiVersion) === "legacy") {
-    return getProfile(baseUrl, apiKey, containerTag, query, scope, "legacy");
+    return getProfile(baseUrl, auth2, containerTag, query, scope, "legacy");
   }
-  return sdkRequest(sdk(baseUrl, apiKey, containerTag).search(containerTag, {
+  const client = await sdk(baseUrl, auth2, containerTag);
+  return sdkRequest(client.search(containerTag, {
     query,
     searchMode: "memories",
     threshold: 0.55,
@@ -3610,8 +3891,8 @@ async function searchMemories(baseUrl, apiKey, containerTag, query, scope, apiVe
     } : {}
   }, { abortSignal, maxRetries: 0 }));
 }
-function getSearches(baseUrl, apiKey, tags, query, apiVersion) {
-  return readNamespaces(tags, (tag) => searchMemories(baseUrl, apiKey, tag, query, undefined, apiVersion));
+function getSearches(baseUrl, auth2, tags, query, apiVersion) {
+  return readNamespaces(tags, (tag) => searchMemories(baseUrl, auth2, tag, query, undefined, apiVersion));
 }
 async function readNamespaces(tags, read) {
   const results = await Promise.allSettled([...new Set(tags.filter(Boolean))].map(read));
@@ -3624,7 +3905,7 @@ async function readNamespaces(tags, read) {
 }
 
 // src/hook-state.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 import {
   mkdirSync,
   readFileSync,
@@ -3635,7 +3916,7 @@ import {
 import { homedir } from "node:os";
 import { join as join2 } from "node:path";
 function statePath(conversationId) {
-  const id = createHash2("sha256").update(conversationId || "unknown").digest("hex").slice(0, 32);
+  const id = createHash3("sha256").update(conversationId || "unknown").digest("hex").slice(0, 32);
   return join2(homedir(), ".supermemory-cursor", "hook-state", `${id}.json`);
 }
 function readHookState(conversationId) {
@@ -3659,7 +3940,7 @@ function writeHookState(conversationId, updates) {
 
 // src/tags.ts
 import { execSync } from "node:child_process";
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 import {
   existsSync,
   readFileSync as readFileSync2,
@@ -3674,7 +3955,7 @@ import {
   sep
 } from "node:path";
 function sha2562(input) {
-  return createHash3("sha256").update(input).digest("hex").slice(0, 16);
+  return createHash4("sha256").update(input).digest("hex").slice(0, 16);
 }
 function getGitRoot(directory) {
   const isolateWorktrees = process.env.SUPERMEMORY_ISOLATE_WORKTREES === "true";
@@ -3772,7 +4053,7 @@ function getGitRepoInfo(directory) {
     return result;
   }
 }
-function readJson2(filePath) {
+function readJson3(filePath) {
   try {
     if (!existsSync(filePath))
       return null;
@@ -3905,7 +4186,7 @@ function getLegacyCursorProjectTags(directory, config) {
 function getLegacyClaudeTags(directory) {
   const basePath = getProjectBasePath(directory);
   const projectHash = sha2562(basePath);
-  const config = readJson2(join3(basePath, ".claude", ".supermemory-claude", "config.json"));
+  const config = readJson3(join3(basePath, ".claude", ".supermemory-claude", "config.json"));
   return {
     personal: uniqueTags([
       stringValue(config?.personalContainerTag),
@@ -3920,7 +4201,7 @@ function getLegacyClaudeTags(directory) {
   };
 }
 function getLegacyCodexTags(directory) {
-  const config = readJson2(join3(homedir2(), ".codex", "supermemory.json"));
+  const config = readJson3(join3(homedir2(), ".codex", "supermemory.json"));
   const prefix = stringValue(config?.containerTagPrefix) || "codex";
   const userIdentity = getGitEmail(directory) || process.env.USER || process.env.USERNAME || hostname();
   const userHash = sha2562(userIdentity);
@@ -4070,7 +4351,7 @@ function resultText(result) {
   return String(result.memory ?? result.chunk ?? result.content ?? result.title ?? "").trim();
 }
 function hashText(text) {
-  return createHash4("sha256").update(text.toLowerCase()).digest("hex");
+  return createHash5("sha256").update(text.toLowerCase()).digest("hex");
 }
 function selectRecallResults(profiles, seenHashes, threshold = MIN_SIMILARITY) {
   const seen = new Set(seenHashes);
@@ -4121,15 +4402,15 @@ async function runPromptRecall(input) {
   try {
     const root = workspaceRoot(input);
     const config = loadConfig(root);
-    const apiKey = getApiKey(config);
-    if (!apiKey) {
+    if (!isConfigured(config)) {
       process.stdout.write(JSON.stringify({ continue: true }));
       return;
     }
+    const auth2 = () => getAuthToken(config);
     const id = conversationId(input);
     const state = readHookState(id);
     const tags = getResolvedTags(root, config);
-    const profiles = await getSearches(config.baseUrl, apiKey, tags.allReads, prompt.slice(0, MAX_QUERY_LENGTH), config.apiVersion);
+    const profiles = await getSearches(config.baseUrl, auth2, tags.allReads, prompt.slice(0, MAX_QUERY_LENGTH), config.apiVersion);
     const { fresh, hashes } = selectRecallResults(profiles, state.seenHashes ?? [], Math.max(MIN_SIMILARITY, config.similarityThreshold));
     writeHookState(id, fresh.length > 0 ? {
       pendingContext: formatRecall(fresh, tags.canonical),
