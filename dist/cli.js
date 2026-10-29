@@ -34,7 +34,7 @@ import childProcess from "node:child_process";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 // package.json
-var version = "1.2.3";
+var version = "1.3.0";
 
 // src/auth.ts
 var CREDENTIALS_DIR = path.join(os.homedir(), ".supermemory-cursor");

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.0
 
 - Sign in with OAuth 2.1 (dynamic client registration and PKCE) instead of a browser-issued API key. Tokens refresh automatically across hooks and the MCP proxy; `logout` revokes them. API keys from the environment, config or an existing credentials file keep working and take precedence.
 
