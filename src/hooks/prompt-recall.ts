@@ -3,6 +3,7 @@ import { loadConfig, getAuthToken, isConfigured } from "../config.ts";
 import { getSearches } from "../hook-api.ts";
 import { readHookState, writeHookState } from "../hook-state.ts";
 import { getResolvedTags } from "../tags.ts";
+import { MEMORY_MARK_NOTE } from "../context.ts";
 import {
   conversationId,
   type CursorHookInput,
@@ -12,7 +13,7 @@ import { isMainModule, runHook } from "../runtime.ts";
 
 const MIN_PROMPT_LENGTH = 12;
 const MAX_QUERY_LENGTH = 500;
-const MAX_RESULTS = 5;
+const MAX_RESULTS = 15;
 const MAX_RESULT_CHARS = 300;
 const MIN_SIMILARITY = 0.55;
 const MAX_SEEN_HASHES = 500;
@@ -82,9 +83,11 @@ export function selectRecallResults(
   };
 }
 
+// Hosts like Grok Bot give plugins no notice surface, so the optional notice asks the agent to show recall in its reply.
 export function formatRecall(
   results: RecallResult[],
   containerTag: string,
+  showNotice = false,
 ): string {
   const lines = results.map((result) => {
     const text = resultText(result).slice(0, MAX_RESULT_CHARS);
@@ -92,8 +95,12 @@ export function formatRecall(
     const body = title && text !== title ? `${title} — ${text}` : text;
     return `- ◪ ${body}${result.filepath ? ` (${result.filepath})` : ""}`;
   });
+  const count = `${results.length} ${results.length === 1 ? "memory" : "memories"}`;
+  const notice = showNotice
+    ? `\nBegin your reply to the user with this line on its own, so they can see Supermemory is working: ◪ Supermemory · recalled ${count}`
+    : "";
   return `<supermemory-recall>
-Relevant memory for this turn. Every line marked ◪ came from Supermemory; use it when relevant and preserve the mark when attributing it.
+Relevant memory for this turn, relevance-ranked. ${MEMORY_MARK_NOTE}${notice}
 Container: ${containerTag}
 
 ${lines.join("\n")}
@@ -135,7 +142,7 @@ export async function runPromptRecall(input: CursorHookInput): Promise<void> {
       id,
       fresh.length > 0
         ? {
-            pendingContext: formatRecall(fresh, tags.canonical),
+            pendingContext: formatRecall(fresh, tags.canonical, config.showRecallNotice),
             pendingGeneration: input.generation_id,
             seenHashes: hashes,
           }

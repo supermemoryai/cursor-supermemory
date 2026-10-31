@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { startMcpProxy } from "./mcp-proxy.ts";
 import {
   clearCredentials,
+  detectClient,
   getOAuthConfig,
   loadCredentialData,
   settleAuth,
@@ -16,7 +17,7 @@ import {
   isConfigured,
   loadConfig,
 } from "./config.ts";
-import { getProfile, resolveApiVersion } from "./hook-api.ts";
+import { getAccount, getProfile, resolveApiVersion } from "./hook-api.ts";
 import { getResolvedTags } from "./tags.ts";
 import { writeGlobalMcpEntry } from "./mcp-install.ts";
 
@@ -39,8 +40,10 @@ async function main(): Promise<void> {
       const config = loadConfig();
       const printUrl = process.argv.includes("--print-url");
       if (!printUrl) console.log("Opening browser to authenticate...");
+      const flag = process.argv.indexOf("--client");
       await startAuthFlow(getOAuthConfig(getApiBaseUrl(config), getMcpUrl(config)), undefined, {
         printUrl,
+        authClient: detectClient(flag >= 0 ? process.argv[flag + 1] : undefined),
       });
       console.log("Authenticated successfully.");
       if (getApiKey(config)) {
@@ -87,6 +90,11 @@ async function main(): Promise<void> {
           config.apiVersion,
         );
         console.log(`Connected to Supermemory (${tags.canonical}).`);
+        const account = await getAccount(config.baseUrl, () => getAuthToken(config));
+        const who = account.email ?? account.name;
+        if (who) {
+          console.log(`Account: ${who}${account.orgName ? ` (${account.orgName})` : ""}`);
+        }
       } catch (error) {
         console.error(
           `Supermemory is unreachable: ${error instanceof Error ? error.message : String(error)}`,
@@ -102,7 +110,7 @@ async function main(): Promise<void> {
 Commands:
   mcp          Proxy the hosted Supermemory MCP server over stdio
   mcp-install  Register the MCP server in ~/.cursor/mcp.json with an absolute path
-  login        Authenticate with Supermemory
+  login        Authenticate with Supermemory (--client grok_bot names Grok Bot on the consent page)
   logout       Revoke and remove stored credentials
   status       Show authentication status`);
       if (command) process.exitCode = 1;

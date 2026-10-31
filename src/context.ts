@@ -1,3 +1,6 @@
+export const MEMORY_MARK_NOTE =
+  'Every line marked ◪ came from Supermemory. When one shapes your answer, credit it naturally with the ◪ prefix (e.g. "◪ earlier you decided X"); if you name the source, say "from supermemory", never generic memory.';
+
 // Without an explicit tag the hosted server writes to the active space, where hook recall never looks.
 export function formatContainerDirective(containerTag: string): string {
   return `This project's memory container: ${containerTag}. Pass \`containerTag: "${containerTag}"\` on every Supermemory MCP call (search_memory, add_memory, listMemories) so tool memories and session recall stay in the same space.`;
@@ -41,7 +44,7 @@ export function formatSessionContext(
     );
   }
   return `<supermemory-context>
-Recalled memory for this project (${projectName}). Every line marked ◪ comes from Supermemory. Preserve the mark when citing one, and call the source “Supermemory,” never generic memory.
+Recalled memory for this project (${projectName}). ${MEMORY_MARK_NOTE}
 ${formatContainerDirective(containerTag)}
 
 ${sections.join("\n\n")}
