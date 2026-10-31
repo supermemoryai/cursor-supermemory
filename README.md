@@ -11,7 +11,7 @@ Open **Customize** in Cursor, find **Supermemory**, select **Install**, and choo
 Connect your Supermemory account:
 
 ```bash
-node "$(ls -d ~/.cursor/plugins/local/cursor-supermemory ~/.cursor/plugins/cache/*/cursor-supermemory/*/ 2>/dev/null | head -1)/dist/cli.js" login
+node -e 'const f=require("fs"),p=require("path"),h=require("os").homedir(),e=process.env;const ok=d=>{try{return JSON.parse(f.readFileSync(p.join(d,"package.json"),"utf8")).name==="cursor-supermemory"&&f.existsSync(p.join(d,"dist","cli.js"))}catch{return false}};const ls=d=>{try{return f.readdirSync(d).filter(x=>x!=="node_modules"&&x!==".git").map(x=>p.join(d,x))}catch{return[]}};let t=[e.CURSOR_PLUGIN_ROOT,e.CLAUDE_PLUGIN_ROOT,e.GROK_PLUGIN_ROOT].find(v=>v&&!v.includes("${")&&ok(v));let g=[".cursor/plugins",".grok/installed-plugins",".grok/plugins",".claude/plugins","sand-data/plugins"].map(x=>p.join(h,x));for(let i=0;i<4&&!t;i++){g=g.flatMap(ls);t=g.find(ok)}if(!t){console.error("Supermemory plugin not found");process.exit(1)}require("child_process").spawn(process.execPath,[p.join(t,"dist","cli.js"),...process.argv.slice(1)],{stdio:"inherit"}).on("exit",c=>process.exit(c??1))' login
 ```
 
 Every host names the install path after itself — Cursor sets `CURSOR_PLUGIN_ROOT`,
@@ -32,8 +32,8 @@ The published npm **1.0.0** package is a different, older product with a local M
 ## What it does
 
 - **Session context** — loads your persistent profile when a Cursor conversation starts
-- **Automatic recall** — searches on substantive prompts, deduplicates results, and injects them after the first tool result supported by Cursor
-- **Incremental capture** — saves each completed turn and retries unsaved transcript deltas at session end
+- **Automatic recall** — searches on substantive prompts, deduplicates up to fifteen results, and injects them after the first tool result supported by Cursor. The agent opens its reply with `◪ Supermemory · recalled N memories`, since Cursor-format hosts have no other notice surface
+- **Incremental capture** — saves each completed turn and retries unsaved transcript deltas at session end. Credential-shaped values and anything in `<private>…</private>` are redacted before upload; the filter cannot catch every secret
 - **MCP tools** — the hosted Supermemory tools, proxied over stdio for explicit memory control
 - **Context gatherer** — fans out targeted searches before substantial work
 - **Always-on rule** — makes the agent recall relevant history proactively
@@ -65,7 +65,12 @@ Pass `containerTag` on every call, using the tag from the
 `<supermemory-context>` block the session-start hook injects. Without it the
 hosted server writes to the account's active space, and this project's hook
 recall will not find the memory. The bundled rule, skills, and context-gatherer
-agent all carry that instruction.
+agent all carry that instruction, and the proxy fills in this repository's
+namespace when a space-scoped call omits one, as Claude Code's proxy does.
+
+The proxy also marks every memory in `search_memory`, `get_profile` and
+`list_memories` results with ◪, the Supermemory mark, and tells the agent to
+credit it the same way it credits hook recall.
 
 Config lives in files rather than tools: see [Configuration](#configuration) or
 run the `/supermemory-config` command.
@@ -79,6 +84,10 @@ run the `/supermemory-config` command.
 | `/supermemory-setup` | Connect Supermemory to Cursor |
 | `/supermemory-status` | Check authentication and live connectivity |
 | `/supermemory-logout` | Disconnect Supermemory from Cursor |
+
+Hosts without slash commands, such as Grok, use the matching skills instead:
+`memory-connect` ("Sign me in to Supermemory"), `memory-status` ("Is Supermemory
+connected?") and `memory-disconnect` ("Disconnect Supermemory").
 
 ## Configuration
 
@@ -141,6 +150,7 @@ Per-workspace overrides. Add to `.gitignore` if it contains an API key. Project 
 | `maxMemories` | Max project memories injected at session start | `10` |
 | `maxProjectMemories` | Max project memories injected at session start | `5` |
 | `injectProfile` | Whether to inject user profile at session start | `true` |
+| `showRecallNotice` | Ask the agent to open replies that use recalled memory with `◪ Supermemory · recalled N memories` | `true` |
 | `signalExtraction` | Capture only turns containing durable-signal keywords | `false` |
 | `signalKeywords` | Keywords that trigger signal-based capture | `remember`, `architecture`, `decision`, `bug`, `fix` |
 | `signalTurnsBefore` | Number of nearby turns retained around a signal | `3` |
@@ -151,7 +161,7 @@ Create or edit the config file directly, or run the `/supermemory-config` comman
 
 The hosted API root (`https://api.supermemory.ai`, including equivalent case/default-port/trailing-slash spellings) defaults to v5. Custom URLs keep the v3/v4 REST contract by default, including their path prefix and bearer key, so older self-hosted servers below 0.0.9 remain usable. After upgrading your custom server, opt into v5 with `"apiVersion": "v5"` or `SUPERMEMORY_API_VERSION=v5`. An explicit `legacy` also supports hosted rollback if that server still serves v3/v4. Invalid versions fail the memory operation; there is no failed-write version probing or fallback to the hosted API.
 
-Recall explicitly uses memories search, threshold `0.55`, ten candidates per namespace, no reranking or query rewriting. The existing local configured threshold floor, five-result cap, excerpts and session dedup remain. Session context uses query-free profiles and renders both old string facts and v5 object facts. Reads and capture retain the three-second request budget and zero automatic transport retries. Capture keeps its generation IDs and POST append/diff semantics, advancing its cursor only on valid document acceptance; acceptance is not completed processing or exactly-once billing. Dynamic processing is retained and can delay newly recallable facts by minutes; no billable instant processing is enabled.
+Recall explicitly uses memories search, threshold `0.55`, ten candidates per namespace, no reranking or query rewriting. The existing local configured threshold floor, fifteen-result cap, excerpts and session dedup remain. Session context uses query-free profiles and renders both old string facts and v5 object facts. Reads and capture retain the three-second request budget and zero automatic transport retries. Capture keeps its generation IDs and POST append/diff semantics, advancing its cursor only on valid document acceptance; acceptance is not completed processing or exactly-once billing. Dynamic processing is retained and can delay newly recallable facts by minutes; no billable instant processing is enabled.
 
 These are client contract guarantees, not a live-backend historical-data/ranking parity claim. No namespace move, merge, deletion or backfill is performed. Hosted MCP tool schemas and approvals remain unchanged because MCP is a separate protocol.
 
@@ -205,12 +215,17 @@ Both launch `node -e` with no path of their own and locate the install in order:
 the plugin root a host expanded into the argument, then `CURSOR_PLUGIN_ROOT`,
 `CLAUDE_PLUGIN_ROOT` or `GROK_PLUGIN_ROOT` from the environment (a value still
 reading `${...}` is ignored), then a copy under `~/.cursor/plugins`,
-`~/.grok/installed-plugins`, `~/.grok/plugins` or `~/.claude/plugins`. Grok also
+`~/.grok/installed-plugins`, `~/.grok/plugins`, `~/.claude/plugins` or Grok Bot's
+`~/sand-data/plugins/cache`. Grok also
 reads `.claude-plugin/plugin.json`, which it discovers where `.cursor-plugin/` means
 nothing to it. Hooks fail open when no root resolves; the MCP entry reports it.
 
 Cloud Agents have no browser for the login flow, so set `SUPERMEMORY_API_KEY` in the
 agent environment. That is the only required Cloud Agent step.
+
+On Grok, `login --client grok_bot` registers as "Supermemory for Grok Bot", so the
+consent page names Grok Bot instead of Cursor. It also happens automatically when
+Grok's own hook variables are set or the plugin runs from a `~/.grok` install.
 
 If an environment installs the plugin somewhere else entirely — none of those
 directories and no usable plugin root — run this from the plugin directory to

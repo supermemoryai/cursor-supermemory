@@ -14,6 +14,21 @@ describe("conversation capture", () => {
     { type: "assistant", content: "Saved the decision." },
   ];
 
+  test("redacts credentials and <private> content before capture", () => {
+    const [entry] = parseTranscript(
+      JSON.stringify([
+        {
+          role: "user",
+          content:
+            "Use OPENAI_API_KEY=sk-proj-abcdefghijklmnop1234 with Bearer abcdefghijklmnopqrstuvwx and <private>my home address</private> Keep MAX_RETRIES=3.",
+        },
+      ]),
+    );
+    expect(entry?.text).toBe(
+      "Use OPENAI_API_KEY=[REDACTED:credential] with Bearer [REDACTED:bearer_token] and [REDACTED] Keep MAX_RETRIES=3.",
+    );
+  });
+
   test("parses array and JSONL transcript formats", () => {
     expect(parseTranscript(JSON.stringify(transcript))).toHaveLength(4);
     expect(parseTranscript(transcript.map((entry) => JSON.stringify(entry)).join("\n"))).toHaveLength(4);

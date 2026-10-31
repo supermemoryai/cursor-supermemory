@@ -33,4 +33,15 @@ describe("prompt recall", () => {
     );
     expect(selectRecallResults(profiles, selected.hashes).fresh).toHaveLength(0);
   });
+
+  test("asks the agent to show a recall line only when the notice is on", () => {
+    const results = [{ memory: "Use Drizzle" }, { memory: "Expand then contract" }];
+    expect(formatRecall(results, "repo_example__1234", true)).toContain(
+      "◪ Supermemory · recalled 2 memories",
+    );
+    expect(formatRecall(results.slice(0, 1), "repo_example__1234", true)).toContain(
+      "◪ Supermemory · recalled 1 memory",
+    );
+    expect(formatRecall(results, "repo_example__1234")).not.toContain("Begin your reply");
+  });
 });

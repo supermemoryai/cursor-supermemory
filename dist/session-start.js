@@ -36,17 +36,6 @@ var REFRESH_REQUEST_TIMEOUT = 1e4;
 var REFRESH_SKEW = 60000;
 var configuredAuthTimeout = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT);
 var AUTH_TIMEOUT = Number.isFinite(configuredAuthTimeout) && configuredAuthTimeout > 0 ? configuredAuthTimeout : 5 * 60000;
-function page(title, message) {
-  return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>${title} - Supermemory</title><style>
-  body { background: #111; color: #fff; font-family: system-ui; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-  h1 { font-size: 2rem; margin: 0 0 12px; } p { color: #aaa; }
-</style></head><body><h1>${title}</h1><p>${message}</p></body></html>`;
-}
-var SUCCESS_HTML = page("Connected to Cursor!", "You can close this tab and return to Cursor.");
-var DENIED_HTML = page("Authorization denied", "Supermemory was not connected. Return to Cursor and run login again to retry.");
-var FAILED_HTML = page("Connection failed", "Return to Cursor and run login again.");
-
 class AuthError extends Error {
   code;
   constructor(message, code) {
@@ -284,6 +273,7 @@ var DEFAULTS = {
   maxMemories: 10,
   maxProjectMemories: 5,
   injectProfile: true,
+  showRecallNotice: true,
   signalExtraction: false,
   signalKeywords: ["remember", "architecture", "decision", "bug", "fix"],
   signalTurnsBefore: 3,
@@ -326,6 +316,7 @@ function loadConfig(cwd) {
     maxMemories: merged.maxMemories,
     maxProjectMemories: merged.maxProjectMemories,
     injectProfile: merged.injectProfile,
+    showRecallNotice: merged.showRecallNotice !== false,
     signalExtraction: merged.signalExtraction,
     signalKeywords: Array.isArray(merged.signalKeywords) ? merged.signalKeywords.filter((keyword) => typeof keyword === "string") : DEFAULTS.signalKeywords,
     signalTurnsBefore: merged.signalTurnsBefore,
@@ -2527,10 +2518,10 @@ class ConnectorsClient {
     return HttpResponsePromise.fromPromise(this.__listAll(request, requestOptions));
   }
   async __listAll(request = {}, requestOptions) {
-    const { provider, page: page2, limit } = request;
+    const { provider, page, limit } = request;
     const _queryParams = {
       provider: provider != null ? provider : undefined,
-      page: page2,
+      page,
       limit
     };
     const _authRequest = await this._options.authProvider.getAuthRequest();
@@ -2576,10 +2567,10 @@ class ConnectorsClient {
     return HttpResponsePromise.fromPromise(this.__list(namespace, request, requestOptions));
   }
   async __list(namespace, request = {}, requestOptions) {
-    const { provider, page: page2, limit } = request;
+    const { provider, page, limit } = request;
     const _queryParams = {
       provider: provider != null ? provider : undefined,
-      page: page2,
+      page,
       limit
     };
     const _authRequest = await this._options.authProvider.getAuthRequest();
@@ -3439,9 +3430,9 @@ class NamespacesClient {
     return HttpResponsePromise.fromPromise(this.__list(request, requestOptions));
   }
   async __list(request = {}, requestOptions) {
-    const { page: page2, limit } = request;
+    const { page, limit } = request;
     const _queryParams = {
-      page: page2,
+      page,
       limit
     };
     const _authRequest = await this._options.authProvider.getAuthRequest();
@@ -4027,9 +4018,9 @@ class SupermemoryClient {
     return HttpResponsePromise.fromPromise(this.__list(namespace, type, request, requestOptions));
   }
   async __list(namespace, type, request = {}, requestOptions) {
-    const { page: page2, limit, sort, order, ..._body } = request;
+    const { page, limit, sort, order, ..._body } = request;
     const _queryParams = {
-      page: page2,
+      page,
       limit,
       sort: sort != null ? sort : undefined,
       order: order != null ? order : undefined
@@ -4252,6 +4243,7 @@ async function readNamespaces(tags, read) {
 }
 
 // src/context.ts
+var MEMORY_MARK_NOTE = 'Every line marked ◪ came from Supermemory. When one shapes your answer, credit it naturally with the ◪ prefix (e.g. "◪ earlier you decided X"); if you name the source, say "from supermemory", never generic memory.';
 function formatContainerDirective(containerTag) {
   return `This project's memory container: ${containerTag}. Pass \`containerTag: "${containerTag}"\` on every Supermemory MCP call (search_memory, add_memory, listMemories) so tool memories and session recall stay in the same space.`;
 }
@@ -4276,7 +4268,7 @@ ${dynamics.map((fact) => `- ◪ ${fact}`).join(`
 `)}`);
   }
   return `<supermemory-context>
-Recalled memory for this project (${projectName}). Every line marked ◪ comes from Supermemory. Preserve the mark when citing one, and call the source “Supermemory,” never generic memory.
+Recalled memory for this project (${projectName}). ${MEMORY_MARK_NOTE}
 ${formatContainerDirective(containerTag)}
 
 ${sections.join(`

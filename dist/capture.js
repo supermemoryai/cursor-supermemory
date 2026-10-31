@@ -39,17 +39,6 @@ var REFRESH_REQUEST_TIMEOUT = 1e4;
 var REFRESH_SKEW = 60000;
 var configuredAuthTimeout = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT);
 var AUTH_TIMEOUT = Number.isFinite(configuredAuthTimeout) && configuredAuthTimeout > 0 ? configuredAuthTimeout : 5 * 60000;
-function page(title, message) {
-  return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>${title} - Supermemory</title><style>
-  body { background: #111; color: #fff; font-family: system-ui; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-  h1 { font-size: 2rem; margin: 0 0 12px; } p { color: #aaa; }
-</style></head><body><h1>${title}</h1><p>${message}</p></body></html>`;
-}
-var SUCCESS_HTML = page("Connected to Cursor!", "You can close this tab and return to Cursor.");
-var DENIED_HTML = page("Authorization denied", "Supermemory was not connected. Return to Cursor and run login again to retry.");
-var FAILED_HTML = page("Connection failed", "Return to Cursor and run login again.");
-
 class AuthError extends Error {
   code;
   constructor(message, code) {
@@ -281,6 +270,7 @@ var DEFAULTS = {
   maxMemories: 10,
   maxProjectMemories: 5,
   injectProfile: true,
+  showRecallNotice: true,
   signalExtraction: false,
   signalKeywords: ["remember", "architecture", "decision", "bug", "fix"],
   signalTurnsBefore: 3,
@@ -323,6 +313,7 @@ function loadConfig(cwd) {
     maxMemories: merged.maxMemories,
     maxProjectMemories: merged.maxProjectMemories,
     injectProfile: merged.injectProfile,
+    showRecallNotice: merged.showRecallNotice !== false,
     signalExtraction: merged.signalExtraction,
     signalKeywords: Array.isArray(merged.signalKeywords) ? merged.signalKeywords.filter((keyword) => typeof keyword === "string") : DEFAULTS.signalKeywords,
     signalTurnsBefore: merged.signalTurnsBefore,
@@ -2180,10 +2171,10 @@ class ConnectorsClient {
     return HttpResponsePromise.fromPromise(this.__listAll(request, requestOptions));
   }
   async __listAll(request = {}, requestOptions) {
-    const { provider, page: page2, limit } = request;
+    const { provider, page, limit } = request;
     const _queryParams = {
       provider: provider != null ? provider : undefined,
-      page: page2,
+      page,
       limit
     };
     const _authRequest = await this._options.authProvider.getAuthRequest();
@@ -2229,10 +2220,10 @@ class ConnectorsClient {
     return HttpResponsePromise.fromPromise(this.__list(namespace, request, requestOptions));
   }
   async __list(namespace, request = {}, requestOptions) {
-    const { provider, page: page2, limit } = request;
+    const { provider, page, limit } = request;
     const _queryParams = {
       provider: provider != null ? provider : undefined,
-      page: page2,
+      page,
       limit
     };
     const _authRequest = await this._options.authProvider.getAuthRequest();
@@ -3092,9 +3083,9 @@ class NamespacesClient {
     return HttpResponsePromise.fromPromise(this.__list(request, requestOptions));
   }
   async __list(request = {}, requestOptions) {
-    const { page: page2, limit } = request;
+    const { page, limit } = request;
     const _queryParams = {
-      page: page2,
+      page,
       limit
     };
     const _authRequest = await this._options.authProvider.getAuthRequest();
@@ -3680,9 +3671,9 @@ class SupermemoryClient {
     return HttpResponsePromise.fromPromise(this.__list(namespace, type, request, requestOptions));
   }
   async __list(namespace, type, request = {}, requestOptions) {
-    const { page: page2, limit, sort, order, ..._body } = request;
+    const { page, limit, sort, order, ..._body } = request;
     const _queryParams = {
-      page: page2,
+      page,
       limit,
       sort: sort != null ? sort : undefined,
       order: order != null ? order : undefined
@@ -4333,9 +4324,29 @@ async function runHook(handler, fallback = { continue: true }) {
   }
 }
 
+// src/redact.ts
+var CREDENTIAL_ASSIGNMENT = /\b((?:[A-Z][A-Z0-9]*_)*(?:API_?KEY|ACCESS_?KEY_?ID|SECRET_?ACCESS_?KEY|ACCESS_?TOKEN|AUTH_?TOKEN|TOKEN|PASSWORD|PASSWD|SECRET|CLIENT_?SECRET|PRIVATE_?KEY))(["']?\s*[:=]\s*)("(?:(?!<\|end\|>)[^"])*"|'(?:(?!<\|end\|>)[^'])*'|[^\s,;"'`<>]+)/gi;
+function isPlaceholder(value) {
+  return /^(?:\[REDACTED(?::[^\]]+)?\]|<[^>]+>|\$\{[^}]+\}|\{\{[^}]+\}\}|\$[A-Z_][A-Z0-9_]*|(?:your|example|placeholder|replace|insert|changeme|redacted)(?:[-_ ].*)?|password|token|api[-_]key|secret|dummy|\*+|\.+)$/i.test(value);
+}
+function redactSecrets(text) {
+  if (!text)
+    return text;
+  return text.replace(/-----BEGIN ((?:[A-Z0-9]+ )*PRIVATE KEY)-----[\s\S]*?(?:-----END \1-----|(?="(?:\s+[A-Za-z_][A-Za-z0-9_]*="|<\|end\|>))|(?=<\|end\|>)|$)/g, "[REDACTED:private_key]").replace(/(\b[a-z][a-z0-9+.-]*:\/\/)([^\s/<>"'`]*:[^\s/<>"'`]*?)@/gi, (match, scheme, credentials) => isPlaceholder(credentials.split(":").slice(1).join(":")) ? match : `${scheme}[REDACTED:url_credentials]@`).replace(CREDENTIAL_ASSIGNMENT, (match, name, separator, raw) => {
+    const quote = raw.startsWith('"') || raw.startsWith("'") ? raw[0] : "";
+    const value = quote ? raw.slice(1, -1) : raw;
+    if (value.length < 8 || isPlaceholder(value))
+      return match;
+    return `${name}${separator}${quote}[REDACTED:credential]${quote}`;
+  }).replace(/\bBearer\s+([A-Za-z0-9._~+\/=-]{16,})(?![A-Za-z0-9._~+\/=-])/gi, (match, value) => isPlaceholder(value) ? match : "Bearer [REDACTED:bearer_token]").replace(/(?<![A-Za-z0-9_])(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}|sm_[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{10,}|(?:AKIA|ASIA)[A-Z0-9]{16})(?![A-Za-z0-9_-])/g, "[REDACTED:provider_token]").replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}\b/g, "[REDACTED:jwt]");
+}
+function stripPrivate(text) {
+  return text.replace(/<private>[\s\S]*?<\/private>/gi, "[REDACTED]");
+}
+
 // src/hooks/capture.ts
 function cleanContent(text) {
-  return text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").replace(/<supermemory-(?:context|recall)>[\s\S]*?<\/supermemory-(?:context|recall)>/g, "").trim();
+  return redactSecrets(stripPrivate(text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").replace(/<supermemory-(?:context|recall|status)>[\s\S]*?<\/supermemory-(?:context|recall|status)>/g, ""))).trim();
 }
 function textFromContent(content) {
   if (typeof content === "string")

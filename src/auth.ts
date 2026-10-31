@@ -31,12 +31,42 @@ function page(title: string, message: string): string {
 </style></head><body><h1>${title}</h1><p>${message}</p></body></html>`;
 }
 
-const SUCCESS_HTML = page("Connected to Cursor!", "You can close this tab and return to Cursor.");
-const DENIED_HTML = page(
-  "Authorization denied",
-  "Supermemory was not connected. Return to Cursor and run login again to retry.",
-);
-const FAILED_HTML = page("Connection failed", "Return to Cursor and run login again.");
+const successHtml = (host: string) =>
+  page(`Connected to ${host}!`, `You can close this tab and return to ${host}.`);
+const deniedHtml = (host: string) =>
+  page(
+    "Authorization denied",
+    `Supermemory was not connected. Return to ${host} and run login again to retry.`,
+  );
+const failedHtml = (host: string) => page("Connection failed", `Return to ${host} and run login again.`);
+
+export interface AuthClient {
+  id: "cursor" | "grok_bot";
+  name: string;
+  uri: string;
+}
+
+// The console's consent page names and draws the client from its registered client_uri.
+const CLIENTS: Record<AuthClient["id"], AuthClient> = {
+  cursor: { id: "cursor", name: "Cursor", uri: "https://github.com/supermemoryai/cursor-supermemory" },
+  grok_bot: { id: "grok_bot", name: "Grok Bot", uri: "https://supermemory.ai/docs/integrations/grok-bot" },
+};
+
+const GROK_ENV = ["GROK_PLUGIN_ROOT", "GROK_SESSION_ID", "GROK_HOOK_EVENT", "GROK_WORKSPACE_ROOT"];
+
+// An explicit --client wins; otherwise Grok's own hook variables (not GROK_API_KEY) or a ~/.grok install mean Grok.
+export function detectClient(
+  requested?: string | null,
+  env: NodeJS.ProcessEnv = process.env,
+  entry = process.argv[1] ?? "",
+): AuthClient {
+  const key = requested?.trim().toLowerCase().replace(/[\s-]/g, "_");
+  if (key === "grok" || key === "grok_bot" || key === "grokbot") return CLIENTS.grok_bot;
+  if (key === "cursor") return CLIENTS.cursor;
+  const grokEnv = GROK_ENV.some((name) => !!env[name] && !env[name]!.includes("${"));
+  const grokInstall = entry.split(/[\\/]/).includes(".grok");
+  return grokEnv || grokInstall ? CLIENTS.grok_bot : CLIENTS.cursor;
+}
 
 export interface OAuthConfig {
   apiBaseUrl: string;
@@ -46,6 +76,7 @@ export interface OAuthConfig {
 
 interface OAuthClient extends OAuthConfig {
   clientId: string;
+  clientName?: string;
   redirectUri: string;
   authorizationEndpoint: string;
   tokenEndpoint: string;
@@ -251,9 +282,19 @@ async function oauthRequest(
   return data;
 }
 
-async function registerClient(config: OAuthConfig, signal: AbortSignal): Promise<OAuthClient> {
+async function registerClient(
+  config: OAuthConfig,
+  signal: AbortSignal,
+  authClient: AuthClient = CLIENTS.cursor,
+): Promise<OAuthClient> {
+  const clientName = `Supermemory for ${authClient.name}`;
   const saved = readJson<OAuthClient>(CLIENT_FILE);
-  if (sameConfig(saved, config) && saved?.clientId && saved.redirectUri === REDIRECT_URI)
+  if (
+    sameConfig(saved, config) &&
+    saved?.clientId &&
+    saved.redirectUri === REDIRECT_URI &&
+    (saved.clientName ?? "Supermemory for Cursor") === clientName
+  )
     return saved;
   const issuer = new URL(config.issuer);
   const metadata = await oauthRequest(
@@ -277,8 +318,8 @@ async function registerClient(config: OAuthConfig, signal: AbortSignal): Promise
     signal,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      client_name: "Supermemory for Cursor",
-      client_uri: "https://github.com/supermemoryai/cursor-supermemory",
+      client_name: clientName,
+      client_uri: authClient.uri,
       software_id: "cursor-supermemory",
       software_version: PLUGIN_VERSION,
       redirect_uris: [REDIRECT_URI],
@@ -298,6 +339,7 @@ async function registerClient(config: OAuthConfig, signal: AbortSignal): Promise
   const client: OAuthClient = {
     ...config,
     clientId: registration.client_id,
+    clientName,
     redirectUri: REDIRECT_URI,
     authorizationEndpoint,
     tokenEndpoint,
@@ -472,7 +514,7 @@ export async function openUrl(url: string | URL): Promise<void> {
 export async function startAuthFlow(
   config: OAuthConfig,
   timeoutMs = AUTH_TIMEOUT,
-  { printUrl = false }: { printUrl?: boolean } = {},
+  { printUrl = false, authClient = detectClient() }: { printUrl?: boolean; authClient?: AuthClient } = {},
 ): Promise<string> {
   return withAuthLock(async (remaining) => {
     const controller = new AbortController();
@@ -537,7 +579,7 @@ export async function startAuthFlow(
             );
             res
               .writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
-              .end(SUCCESS_HTML, () => resolve(token));
+              .end(successHtml(authClient.name), () => resolve(token));
           } catch (error) {
             const denied = error instanceof AuthError && error.code === "access_denied";
             if (
@@ -550,7 +592,7 @@ export async function startAuthFlow(
             // Reject once the page is flushed; closing the server drops open connections.
             res
               .writeHead(400, { "Content-Type": "text/html; charset=utf-8" })
-              .end(denied ? DENIED_HTML : FAILED_HTML, () => reject(error));
+              .end(denied ? deniedHtml(authClient.name) : failedHtml(authClient.name), () => reject(error));
           }
         });
         server.on("error", () =>
@@ -563,7 +605,7 @@ export async function startAuthFlow(
         // Claim the callback port before registering, so a busy port fails fast.
         server.listen(AUTH_PORT, "127.0.0.1", async () => {
           try {
-            const registered = await registerClient(config, controller.signal);
+            const registered = await registerClient(config, controller.signal, authClient);
             const authorizationUrl = new URL(
               issuerEndpoint(registered.authorizationEndpoint, registered.issuer),
             );
@@ -585,7 +627,7 @@ export async function startAuthFlow(
               return;
             }
             process.stderr.write(
-              `\nOpen this URL to connect Supermemory to Cursor:\n\n  ${authorizationUrl}\n\nWaiting...\n`,
+              `\nOpen this URL to connect Supermemory to ${authClient.name}:\n\n  ${authorizationUrl}\n\nWaiting...\n`,
             );
             openUrl(authorizationUrl).catch(() =>
               process.stderr.write("Could not open a browser. Open the URL above to continue.\n"),

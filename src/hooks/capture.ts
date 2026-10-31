@@ -13,6 +13,7 @@ import {
   workspaceRoot,
 } from "./types.ts";
 import { isMainModule, readTextFile, runHook } from "../runtime.ts";
+import { redactSecrets, stripPrivate } from "../redact.ts";
 
 interface TranscriptEntry {
   content?: unknown;
@@ -27,13 +28,16 @@ interface CapturedEntry {
 }
 
 function cleanContent(text: string): string {
-  return text
-    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
-    .replace(
-      /<supermemory-(?:context|recall)>[\s\S]*?<\/supermemory-(?:context|recall)>/g,
-      "",
-    )
-    .trim();
+  return redactSecrets(
+    stripPrivate(
+      text
+        .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
+        .replace(
+          /<supermemory-(?:context|recall|status)>[\s\S]*?<\/supermemory-(?:context|recall|status)>/g,
+          "",
+        ),
+    ),
+  ).trim();
 }
 
 function textFromContent(content: unknown): string {
