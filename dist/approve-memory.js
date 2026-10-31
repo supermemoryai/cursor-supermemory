@@ -42,26 +42,41 @@ async function runHook(handler, fallback = { continue: true }) {
 }
 
 // src/hooks/approve-memory.ts
-var READ_ONLY_TOOLS = [
+var READ_ONLY_TOOLS = new Set([
   "search_memory",
+  "get_profile",
+  "list_documents",
+  "get_document",
+  "list_memories",
+  "list_spaces",
+  "who_am_i",
   "listMemories",
   "listDocuments",
   "getDocument",
   "listSpaces",
-  "whoAmI"
-];
-function isReadOnlyMemoryTool(toolName) {
-  return READ_ONLY_TOOLS.some((name) => {
-    if (toolName === name)
-      return true;
-    return toolName.endsWith(name) && /[/:_]$/.test(toolName.slice(0, -name.length));
-  });
+  "whoAmI",
+  "memory-graph",
+  "fetch-graph-data"
+]);
+var SUPERMEMORY_SERVER = /^(?:user-|project-.+-|plugin-(?:cursor-)?supermemory-)?supermemory$/i;
+function splitToolName(toolName) {
+  const name = toolName.replace(/^MCP:\s*/, "");
+  const mcp = /^mcp__(.+?)__(.+)$/.exec(name);
+  if (mcp)
+    return { server: mcp[1], tool: mcp[2] };
+  const qualified = /^(.+)[/:](.+)$/.exec(name);
+  if (qualified)
+    return { server: qualified[1].trim(), tool: qualified[2] };
+  return { tool: name };
 }
 function approveMemoryTool(input) {
-  const toolName = input.tool_name ?? "";
-  if (/supermemory/i.test(toolName) || isReadOnlyMemoryTool(toolName)) {
-    process.stdout.write(JSON.stringify({ permission: "allow" }));
-  }
+  const parsed = splitToolName(input.tool_name ?? "");
+  const server = input.mcp_server_name ?? parsed.server;
+  if (!server || !SUPERMEMORY_SERVER.test(server))
+    return;
+  if (!READ_ONLY_TOOLS.has(parsed.tool))
+    return;
+  process.stdout.write(JSON.stringify({ permission: "allow" }));
 }
 if (isMainModule(import.meta.url)) {
   await runHook(approveMemoryTool);

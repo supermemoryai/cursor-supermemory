@@ -2,6 +2,7 @@ export interface CursorHookInput {
   conversation_id?: string;
   generation_id?: string;
   hook_event_name?: string;
+  mcp_server_name?: string;
   prompt?: string;
   session_id?: string;
   status?: string;
