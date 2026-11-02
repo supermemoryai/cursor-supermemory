@@ -11,7 +11,7 @@ description: >-
 
 3. Pick your folder: use `/workspace/supermemory-bot`, or `-2` if another Bot already writes there. Save it to the prefs line.
 
-4. The moment Supermemory answers, show a result: call `get_profile` on the default space and send up to five facts under "Here's what I already know about you", each starting with ◪. If it is empty, say so and offer two ways to fill it: tell me three things about you or your work, or bring over what ChatGPT or Claude knows (Import).
+4. The moment Supermemory answers, show a result: call `get_profile` on the default space and send up to five facts under "Here's what I already know about you", each starting with ◪. If it is empty, say so and ask them to tell you three things about themselves or their work.
 
 5. Ask whether to tell every Bot about you, as "Tell every Bot" in Introduce me describes, and do it on yes.
 
@@ -23,7 +23,7 @@ description: >-
 
 8. Say how to use you, in three short lines: add me to any group chat; @Supermemory me in any chat; your other Bots can message me too.
 
-9. End with a starter menu as a question widget: introduce me to your Bots, bring over what ChatGPT or Claude knows, tell me something to remember, ask what I know about a project.
+9. End with a starter menu as a question widget: introduce me to your Bots, tell me something to remember, ask what I know about a project.
 
 The moment they ask a question or tell you something to keep, drop the remaining questions and do it.
 

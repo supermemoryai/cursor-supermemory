@@ -22,7 +22,7 @@ Steps:
 1. Read `do-not-save.md`. If the person says "don't remember X", add X there and stop.
 2. Pick the space with Space map: personal for the person's preferences and people, the project's space for project facts. Unsure: personal.
 3. `search_memory` there first and skip anything already stored. If it changes an older memory, end the new one with `Replaces: <old fact>`.
-4. `add_memory`, one fact per call, written to stand alone: `<Area>: <fact> (<source>, <date>)`. The source is "you" when the person said it, "reported by <Bot name>" when a Bot did, and "imported from <assistant>" for imports.
+4. `add_memory`, one fact per call, written to stand alone: `<Area>: <fact> (<source>, <date>)`. The source is "you" when the person said it, and "reported by <Bot name>" when a Bot did.
 5. Confirm the way the prefs line says:
    - each time: `◪ Saved to Supermemory: <fact>`
    - one line at the end: after the last save in the message, `◪ Saved 3: 1) … 2) … 3) …`

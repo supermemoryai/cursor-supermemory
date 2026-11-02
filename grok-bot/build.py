@@ -15,6 +15,7 @@ RETIRED_SKILLS = [
     "supermemory-onboard",
     "supermemory-teach-bots",
     "supermemory-import",
+    "Import",
 ]
 RETIRED_ROUTINES = [
     "Weekly memory digest",

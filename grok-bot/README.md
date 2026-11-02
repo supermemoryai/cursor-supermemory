@@ -19,7 +19,6 @@ The structure follows the official Marketplace Bots: a short role-first descript
 | Group chat | Any group: introduce once per group, then speak only when memory changes the outcome |
 | Space map | Unmapped or new projects; which space something belongs in |
 | Introduce me | "Tell my Bots about you": one line in the memory all the person's Bots share, so every Bot, now and future, messages it instead of using the Supermemory tools. "Stop telling my Bots about you" removes it. "Introduce yourself to my Bots" also messages ticked Bots |
-| Import | Bringing in what ChatGPT or Claude knows |
 
 Working state (space map, groups introduced in, Bots introduced to, the shared line, do-not-save list, pending saves) lives in files in its own folder under `/workspace`, never in Supermemory. Preferences live in its own Grok memory.
 
@@ -30,7 +29,7 @@ Grok Bot makes connectors account-wide, so without the shared line other Bots se
 | File | What it is |
 |---|---|
 | `profile.json` | Name, description, avatar, memory notes, plugins (none) |
-| `skills/*/SKILL.md` | The ten skills |
+| `skills/*/SKILL.md` | The nine skills |
 | `build.py` | Regenerates the four files below |
 | `bot.json` | Everything in Grok Bot's template shape |
 | `setup-prompt.md` | Paste into an empty Bot to turn it into the Supermemory Bot |
@@ -42,7 +41,7 @@ Edit `profile.json` or the skills, then run `python3 build.py`.
 ## Try it privately
 
 1. Existing Supermemory Bot: paste `update-prompt.md` into its own chat. New one: paste `build-prompt.md` into any Bot, or create a Bot named Supermemory and paste `setup-prompt.md`.
-2. Ask "which skills do you have?". Expect 10 skills and no routines.
+2. Ask "which skills do you have?". Expect 9 skills and no routines.
 3. New chat with it: a two-sentence hello, the connect card, then "Here's what I already know about you" with ◪ facts before any question; then two widget questions and a starter menu.
 4. Keep and Forget: "Remember I prefer short answers" → saved as a Preference; tell it a password → refused; "strike 1" → forgotten. "Don't remember my address" → it keeps a do-not-save note.
 5. Group chat with two other Bots: the intro once; a ◪ brief when a task starts; an answer to "@Supermemory what did we decide about X?"; a save line when a decision lands; nothing for chatter. Have another Bot say "Supermemory, forget X" → it refuses.
