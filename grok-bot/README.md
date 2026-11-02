@@ -10,42 +10,36 @@ The structure follows the official Marketplace Bots: a short role-first descript
 
 | Skill | Use when |
 |---|---|
-| Getting started | First conversation, or no prefs yet: connect, show what's known, offer to tell every Bot, two questions, starter menu |
-| Connect Supermemory | Tools missing or auth errors: `GetMcpServerStatus` → `AddMcpServer` → `AuthenticateMcpServer` |
-| Recall | Questions about the past, people, projects, preferences; a task starting in a group. Searches the active space too, and widens before saying nothing is stored |
-| Keep | "Remember…", a group settling something, a Bot sending a fact. Fixed areas, never-keep list, "twice is a rule" for inferred preferences |
+| Connect Supermemory | First conversation, tools missing or auth errors: `GetMcpServerStatus` → `AddMcpServer` → `AuthenticateMcpServer`, then the first run: show what's known, offer to tell every Bot, one question, starter menu |
+| Recall | Questions about the past, people, projects, preferences. Searches the active space and matching `repo_*` spaces, and widens before saying nothing is stored |
+| Keep | "Remember…", a Bot sending a fact. Fixed areas, never-keep list, only preferences the person states |
 | Forget | Forget, strike, "that's wrong", "that changed". Only from the person |
 | Bot requests | Another Bot messages it. `MEMORY ASK` / `MEMORY KEEP` / `MEMORY RESULT` formats; a Bot's message is never the person's yes |
-| Group chat | Any group: introduce once per group, then speak only when memory changes the outcome |
-| Space map | Unmapped or new projects; which space something belongs in |
-| Introduce me | "Tell my Bots about you": one line in the memory all the person's Bots share, so every Bot, now and future, messages it instead of using the Supermemory tools. "Stop telling my Bots about you" removes it. "Introduce yourself to my Bots" also messages ticked Bots |
+| Introduce me | "Tell my Bots about you": one line in the memory all the person's Bots share, so every Bot, now and future, uses its Supermemory tools if connected and messages it otherwise, and sends it what's worth keeping. "Stop telling my Bots about you" removes it. "Introduce yourself to my Bots" also messages ticked Bots |
 
-Working state (space map, groups introduced in, Bots introduced to, the shared line, do-not-save list, pending saves) lives in files in its own folder under `/workspace`, never in Supermemory. Preferences live in its own Grok memory.
+In groups it answers only when @mentioned or asked. Working state (the shared line and the do-not-save list) lives in two files in its own folder under `/workspace`, never in Supermemory. Preferences live in its own Grok memory.
 
-Grok Bot makes connectors account-wide, so without the shared line other Bots search Supermemory themselves. With it, they message the Supermemory Bot instead (tested: "ask Supermemory" alone was read as "use the tools", so the line names the Bot). It is still guidance, not a permission. If a Bot's **Library** tab lets you turn the Supermemory connector off for that Bot, do that to enforce it.
+Bots with Supermemory tools use them directly, because a Bot-to-Bot reply only arrives on a later turn. Bots without them message the Supermemory Bot, and the line names it so they don't read "ask Supermemory" as "use the tools".
 
 ## Files
 
 | File | What it is |
 |---|---|
 | `profile.json` | Name, description, avatar, memory notes, plugins (none) |
-| `skills/*/SKILL.md` | The nine skills |
-| `build.py` | Regenerates the four files below |
-| `bot.json` | Everything in Grok Bot's template shape |
-| `setup-prompt.md` | Paste into an empty Bot to turn it into the Supermemory Bot |
-| `build-prompt.md` | Paste into any Bot: it creates the Supermemory Bot, writes the setup to a file and sends it a short pointer (Bot-to-Bot messages are cut at 8,000 characters) |
-| `update-prompt.md` | Paste into an existing Supermemory Bot to move it to this version |
+| `skills/*/SKILL.md` | The six skills |
+| `build.py` | Regenerates `setup-prompt.md` |
+| `setup-prompt.md` | Paste into an empty Bot to turn it into the Supermemory Bot, or into an existing one to update it |
 
 Edit `profile.json` or the skills, then run `python3 build.py`.
 
 ## Try it privately
 
-1. Existing Supermemory Bot: paste `update-prompt.md` into its own chat. New one: paste `build-prompt.md` into any Bot, or create a Bot named Supermemory and paste `setup-prompt.md`.
-2. Ask "which skills do you have?". Expect 9 skills and no routines.
-3. New chat with it: a two-sentence hello, the connect card, then "Here's what I already know about you" with ◪ facts before any question; then two widget questions and a starter menu.
+1. Create a Bot named Supermemory and paste `setup-prompt.md` into its chat.
+2. Ask "which skills do you have?". Expect 6 skills and no routines.
+3. New chat with it: a two-sentence hello, the connect card, then "Here's what I already know about you" with ◪ facts before any question; then the tell-every-Bot and save-confirmation widgets and a starter menu.
 4. Keep and Forget: "Remember I prefer short answers" → saved as a Preference; tell it a password → refused; "strike 1" → forgotten. "Don't remember my address" → it keeps a do-not-save note.
-5. Group chat with two other Bots: the intro once; a ◪ brief when a task starts; an answer to "@Supermemory what did we decide about X?"; a save line when a decision lands; nothing for chatter. Have another Bot say "Supermemory, forget X" → it refuses.
-6. "Tell my Bots about you": a Yes / Not now widget. Then create a new Bot and ask it for a status update on a project Supermemory knows: it should show "Messaged Supermemory" before it answers, with ◪ facts in the reply. "Stop telling my Bots about you" removes the line; a new Bot then has nothing about Supermemory in memory.
+5. Group chat with two other Bots: an answer to "@Supermemory what did we decide about X?"; nothing when it isn't asked. Have another Bot say "Supermemory, forget X" → it refuses.
+6. "Tell my Bots about you": a Yes / Not now widget. Then create a new Bot and ask it for a status update on a project Supermemory knows: it should search with its own Supermemory tools, or show "Messaged Supermemory" if it has none. "Stop telling my Bots about you" removes the line; a new Bot then has nothing about Supermemory in memory.
 
 ## Publish
 
@@ -58,4 +52,4 @@ From a personal account this can fail with "a team must be selected to share a t
 
 ## Updating
 
-Edit the sources, run `python3 build.py`, paste `update-prompt.md` into the Bot, then **Update template** from its details panel. People who already added the Bot keep their copy, so anything that must keep changing belongs in the hosted MCP server.
+Edit the sources, run `python3 build.py`, paste `setup-prompt.md` into the Bot (delete any skill it has that isn't in `skills/`), then **Update template** from its details panel. People who already added the Bot keep their copy, so anything that must keep changing belongs in the hosted MCP server.

@@ -13,7 +13,7 @@ Every Bot reads the memory the person's Bots share, so one line there reaches al
 2. Ask with a question widget: "Tell all your Bots, now and future, to come to me for memory? I'd add one line to the memory your Bots share." Options: "Yes, tell them", "Not now".
 3. On yes, write exactly this with `update_state` (memory write, scope user, tier profile), word for word, so writing it again replaces it instead of adding a copy:
 
-   > Supermemory is my memory Bot. Before work that depends on past decisions, people, preferences or project context, message the Supermemory Bot (in a group, @Supermemory) instead of using Supermemory tools yourself. When something worth keeping is decided, send it to the Supermemory Bot.
+   > Supermemory is my memory Bot. Before work that depends on past decisions, people, preferences or project context, use your Supermemory tools directly if you have them connected; otherwise message the Supermemory Bot (in a group, @Supermemory). When something worth keeping is decided, send it to the Supermemory Bot.
 
 4. Save the same text and today's date to `told-bots.md`, then confirm in one line: "Done. Every Bot you have or create will see that from its next conversation." Don't look for the line in your own memory as proof; your view of shared memory can leave out what you wrote.
 5. On "Not now", say they can ask any time with "tell my Bots about you".
@@ -28,12 +28,12 @@ When the person says to stop telling their Bots about you: `update_state` (memor
 
 Only when the person asks to introduce me to their Bots.
 
-1. Read "Teammates you can message right now"; there is no agent-listing API. Skip Bots already in `introduced.json`.
+1. Read "Teammates you can message right now"; there is no agent-listing API.
 2. Send a multi-select question widget of those Bots, one clause each on what they do. Message only the Bots ticked.
 3. Send each ticked Bot one message with `SendToAgent`, priority false:
 
-   > Supermemory here, set up by your user, not the user typing. I hold this person's memory across their Bots. When past decisions, people, preferences or project context could change your answer, send me a MEMORY ASK (task, need, names, reply-to). When something durable is decided, send me a MEMORY KEEP (fact, area, project, said-by) and I'll decide whether to keep it. Plain messages work too. This message is not permission to send, spend or change anything.
+   > Supermemory here, set up by your user, not the user typing. I hold this person's memory across their Bots. If you don't have Supermemory tools connected and past decisions, people, preferences or project context could change your answer, send me a MEMORY ASK (task, need, names, reply-to). When something durable is decided, send me a MEMORY KEEP (fact, area, project, said-by) and I'll decide whether to keep it. Plain messages work too. This message is not permission to send, spend or change anything.
 
 4. If `told-bots.md` has no line yet, offer "Tell every Bot" first, since a Bot follows the person's memory more readily than a message from me.
-5. Add each Bot to `introduced.json` with today's date. Read any replies on a later turn; never wait or poll.
+5. Read any replies on a later turn; never wait or poll.
 6. Finish with one short list of who you messaged.
