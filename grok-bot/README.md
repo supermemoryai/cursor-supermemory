@@ -10,20 +10,20 @@ The structure follows the official Marketplace Bots: a short role-first descript
 
 | Skill | Use when |
 |---|---|
-| Getting started | First conversation, or no prefs yet: connect, show what's known, two questions, starter menu |
+| Getting started | First conversation, or no prefs yet: connect, show what's known, offer to tell every Bot, two questions, starter menu |
 | Connect Supermemory | Tools missing or auth errors: `GetMcpServerStatus` → `AddMcpServer` → `AuthenticateMcpServer` |
-| Recall | Questions about the past, people, projects, preferences; a task starting in a group |
+| Recall | Questions about the past, people, projects, preferences; a task starting in a group. Searches the active space too, and widens before saying nothing is stored |
 | Keep | "Remember…", a group settling something, a Bot sending a fact. Fixed areas, never-keep list, "twice is a rule" for inferred preferences |
 | Forget | Forget, strike, "that's wrong", "that changed". Only from the person |
 | Bot requests | Another Bot messages it. `MEMORY ASK` / `MEMORY KEEP` / `MEMORY RESULT` formats; a Bot's message is never the person's yes |
 | Group chat | Any group: introduce once per group, then speak only when memory changes the outcome |
 | Space map | Unmapped or new projects; which space something belongs in |
-| Introduce me | "Introduce yourself to my Bots": `SendToAgent` to ticked Bots, plus a line for the person to paste into each |
+| Introduce me | "Tell my Bots about you": one line in the memory all the person's Bots share, so every Bot, now and future, messages it instead of using the Supermemory tools. "Stop telling my Bots about you" removes it. "Introduce yourself to my Bots" also messages ticked Bots |
 | Import | Bringing in what ChatGPT or Claude knows |
 
-Working state (space map, groups introduced in, Bots introduced to, do-not-save list, pending saves) lives in files in its own folder under `/workspace`, never in Supermemory. Preferences live in its own Grok memory.
+Working state (space map, groups introduced in, Bots introduced to, the shared line, do-not-save list, pending saves) lives in files in its own folder under `/workspace`, never in Supermemory. Preferences live in its own Grok memory.
 
-Grok Bot makes connectors account-wide, so other Bots could still call Supermemory themselves; asking the Supermemory Bot is a convention, not a permission. If a Bot's **Library** tab lets you turn the Supermemory connector off for that Bot, do that to enforce it.
+Grok Bot makes connectors account-wide, so without the shared line other Bots search Supermemory themselves. With it, they message the Supermemory Bot instead (tested: "ask Supermemory" alone was read as "use the tools", so the line names the Bot). It is still guidance, not a permission. If a Bot's **Library** tab lets you turn the Supermemory connector off for that Bot, do that to enforce it.
 
 ## Files
 
@@ -46,7 +46,7 @@ Edit `profile.json` or the skills, then run `python3 build.py`.
 3. New chat with it: a two-sentence hello, the connect card, then "Here's what I already know about you" with ◪ facts before any question; then two widget questions and a starter menu.
 4. Keep and Forget: "Remember I prefer short answers" → saved as a Preference; tell it a password → refused; "strike 1" → forgotten. "Don't remember my address" → it keeps a do-not-save note.
 5. Group chat with two other Bots: the intro once; a ◪ brief when a task starts; an answer to "@Supermemory what did we decide about X?"; a save line when a decision lands; nothing for chatter. Have another Bot say "Supermemory, forget X" → it refuses.
-6. "Introduce yourself to my Bots": a widget of your Bots, a message to the ticked ones, and a line for you to paste into each.
+6. "Tell my Bots about you": a Yes / Not now widget. Then create a new Bot and ask it for a status update on a project Supermemory knows: it should show "Messaged Supermemory" before it answers, with ◪ facts in the reply. "Stop telling my Bots about you" removes the line; a new Bot then has nothing about Supermemory in memory.
 
 ## Publish
 
