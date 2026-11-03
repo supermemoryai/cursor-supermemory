@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.1
+
+- Auto-approve only read-only tools on the Supermemory MCP server. Writes, forgets, uploads and active-space changes now go through Cursor's normal approval, and same-named tools on other servers are no longer approved. Approval runs in `beforeMCPExecution`, which carries the server name that `preToolUse` lacks.
+
 ## 1.3.0
 
 - Sign in with OAuth 2.1 (dynamic client registration and PKCE) instead of a browser-issued API key. Tokens refresh automatically across hooks and the MCP proxy; `logout` revokes them. API keys from the environment, config or an existing credentials file keep working and take precedence.
