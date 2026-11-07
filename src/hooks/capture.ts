@@ -7,6 +7,12 @@ import {
   writeHookState,
 } from "../hook-state.ts";
 import { getResolvedTags } from "../tags.ts";
+import { sessionSkipReason } from "../session-filter.ts";
+import {
+  claimOpeningPrompt,
+  openingPromptMarker,
+  releaseOpeningPrompt,
+} from "../repeat-guard.ts";
 import {
   conversationId,
   type CursorHookInput,
@@ -137,6 +143,7 @@ async function capture(input: CursorHookInput): Promise<void> {
 
     const id = conversationId(input);
     const state = readHookState(id);
+    if (sessionSkipReason(input, config, state)) return;
     const entries = parseTranscript(await readTextFile(transcriptPath));
     const capturedEntries =
       state.transcriptPath === transcriptPath
@@ -150,10 +157,32 @@ async function capture(input: CursorHookInput): Promise<void> {
       config.signalKeywords,
       config.signalTurnsBefore,
     );
-    const content = formatCapture(selected);
-    if (content.length < 100) return;
-
     const tags = getResolvedTags(root, config);
+    const opening =
+      config.dedupeOpeningPrompt &&
+      start === 0 &&
+      entries[0]?.role === "user" &&
+      selected[0] === entries[0]
+        ? entries[0].text
+        : undefined;
+    const ownsOpening =
+      opening !== undefined && claimOpeningPrompt(tags.canonical, opening);
+    const releaseOpening = () => {
+      if (ownsOpening) releaseOpeningPrompt(tags.canonical, opening!);
+    };
+    const content = formatCapture(
+      opening !== undefined && !ownsOpening
+        ? [
+            { role: "user", text: openingPromptMarker(tags.canonical, opening) },
+            ...selected.slice(1),
+          ]
+        : selected,
+    );
+    if (content.length < 100) {
+      releaseOpening();
+      return;
+    }
+
     const generation =
       input.generation_id ||
       createHash("sha256").update(content).digest("hex").slice(0, 32);
@@ -178,7 +207,10 @@ async function capture(input: CursorHookInput): Promise<void> {
         entityContext: AGENT_ENTITY_CONTEXT,
       },
       config.apiVersion,
-    );
+    ).catch((error) => {
+      releaseOpening();
+      throw error;
+    });
     writeHookState(id, {
       capturedEntries: entries.length,
       transcriptPath,

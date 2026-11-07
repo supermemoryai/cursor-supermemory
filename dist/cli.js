@@ -490,7 +490,12 @@ var DEFAULTS = {
   signalTurnsBefore: 3,
   repoContainerTag: null,
   userContainerTag: null,
-  projectContainerTag: null
+  projectContainerTag: null,
+  captureSubagents: false,
+  captureHeadless: false,
+  captureOrchestrated: true,
+  dedupeOpeningPrompt: true,
+  dedupeRecallQueries: true
 };
 function readJson2(filePath) {
   try {
@@ -515,6 +520,14 @@ function findProjectConfig(cwd) {
   }
   return null;
 }
+function flag(envName, value, fallback) {
+  const env = process.env[envName]?.trim().toLowerCase();
+  if (env === "true" || env === "1")
+    return true;
+  if (env === "false" || env === "0")
+    return false;
+  return typeof value === "boolean" ? value : fallback;
+}
 function loadConfig(cwd) {
   const projectConfig = findProjectConfig(cwd || process.cwd());
   const globalConfig = readJson2(GLOBAL_CONFIG_PATH);
@@ -532,7 +545,12 @@ function loadConfig(cwd) {
     signalTurnsBefore: merged.signalTurnsBefore,
     repoContainerTag: merged.repoContainerTag,
     userContainerTag: merged.userContainerTag,
-    projectContainerTag: merged.projectContainerTag
+    projectContainerTag: merged.projectContainerTag,
+    captureSubagents: flag("SUPERMEMORY_CAPTURE_SUBAGENTS", merged.captureSubagents, DEFAULTS.captureSubagents),
+    captureHeadless: flag("SUPERMEMORY_CAPTURE_HEADLESS", merged.captureHeadless, DEFAULTS.captureHeadless),
+    captureOrchestrated: flag("SUPERMEMORY_CAPTURE_ORCHESTRATED", merged.captureOrchestrated, DEFAULTS.captureOrchestrated),
+    dedupeOpeningPrompt: flag("SUPERMEMORY_DEDUPE_OPENING_PROMPT", merged.dedupeOpeningPrompt, DEFAULTS.dedupeOpeningPrompt),
+    dedupeRecallQueries: flag("SUPERMEMORY_DEDUPE_RECALL_QUERIES", merged.dedupeRecallQueries, DEFAULTS.dedupeRecallQueries)
   };
 }
 function getApiKey(config) {

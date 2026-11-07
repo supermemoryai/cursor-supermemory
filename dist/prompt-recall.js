@@ -16,7 +16,7 @@ var __export = (target, all) => {
 var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // src/hooks/prompt-recall.ts
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash6 } from "node:crypto";
 
 // src/config.ts
 import path2 from "node:path";
@@ -286,7 +286,12 @@ var DEFAULTS = {
   signalTurnsBefore: 3,
   repoContainerTag: null,
   userContainerTag: null,
-  projectContainerTag: null
+  projectContainerTag: null,
+  captureSubagents: false,
+  captureHeadless: false,
+  captureOrchestrated: true,
+  dedupeOpeningPrompt: true,
+  dedupeRecallQueries: true
 };
 function readJson2(filePath) {
   try {
@@ -311,6 +316,14 @@ function findProjectConfig(cwd) {
   }
   return null;
 }
+function flag(envName, value, fallback) {
+  const env = process.env[envName]?.trim().toLowerCase();
+  if (env === "true" || env === "1")
+    return true;
+  if (env === "false" || env === "0")
+    return false;
+  return typeof value === "boolean" ? value : fallback;
+}
 function loadConfig(cwd) {
   const projectConfig = findProjectConfig(cwd || process.cwd());
   const globalConfig = readJson2(GLOBAL_CONFIG_PATH);
@@ -328,7 +341,12 @@ function loadConfig(cwd) {
     signalTurnsBefore: merged.signalTurnsBefore,
     repoContainerTag: merged.repoContainerTag,
     userContainerTag: merged.userContainerTag,
-    projectContainerTag: merged.projectContainerTag
+    projectContainerTag: merged.projectContainerTag,
+    captureSubagents: flag("SUPERMEMORY_CAPTURE_SUBAGENTS", merged.captureSubagents, DEFAULTS.captureSubagents),
+    captureHeadless: flag("SUPERMEMORY_CAPTURE_HEADLESS", merged.captureHeadless, DEFAULTS.captureHeadless),
+    captureOrchestrated: flag("SUPERMEMORY_CAPTURE_ORCHESTRATED", merged.captureOrchestrated, DEFAULTS.captureOrchestrated),
+    dedupeOpeningPrompt: flag("SUPERMEMORY_DEDUPE_OPENING_PROMPT", merged.dedupeOpeningPrompt, DEFAULTS.dedupeOpeningPrompt),
+    dedupeRecallQueries: flag("SUPERMEMORY_DEDUPE_RECALL_QUERIES", merged.dedupeRecallQueries, DEFAULTS.dedupeRecallQueries)
   };
 }
 function getApiKey(config) {
@@ -4282,6 +4300,127 @@ function getResolvedTags(directory, config) {
   };
 }
 
+// src/session-filter.ts
+import { execFileSync } from "node:child_process";
+import { readFileSync as readFileSync3 } from "node:fs";
+import { basename as basename2 } from "node:path";
+var ORCHESTRATOR_ENV = [
+  "CONDUCTOR_WORKSPACE_PATH",
+  "CONDUCTOR_SESSION_ID",
+  "VK_WORKSPACE_ID"
+];
+function isSubagentSession(input) {
+  return Boolean(input.parent_conversation_id || input.parent_tool_call_id || input.subagentType || input.subagent_type || /[\\/]agent-transcripts[\\/][^\\/]+[\\/]subagents[\\/]/.test(input.transcript_path ?? ""));
+}
+function isOrchestratedSession(env = process.env) {
+  return ORCHESTRATOR_ENV.some((name) => !!env[name]);
+}
+function readProcess(pid) {
+  try {
+    const argv = readFileSync3(`/proc/${pid}/cmdline`, "utf8").split("\x00").filter(Boolean);
+    const stat = readFileSync3(`/proc/${pid}/stat`, "utf8");
+    return { ppid: Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]), argv };
+  } catch {}
+  try {
+    const match = execFileSync("ps", ["-o", "ppid=,args=", "-p", String(pid)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim().match(/^(\d+)\s+(.*)$/s);
+    return match ? { ppid: Number(match[1]), argv: match[2].split(/\s+/) } : null;
+  } catch {
+    return null;
+  }
+}
+function isCursorCliPrintMode(env = process.env, read = readProcess, startPid = process.ppid) {
+  const invokedAs = env.CURSOR_INVOKED_AS;
+  if (!invokedAs)
+    return false;
+  let pid = startPid;
+  for (let depth = 0;depth < 8 && pid > 1; depth++) {
+    const proc = read(pid);
+    if (!proc)
+      return false;
+    if (proc.argv[0] && basename2(proc.argv[0]) === invokedAs) {
+      const end = proc.argv.indexOf("--");
+      return proc.argv.slice(1, end < 0 ? undefined : end).some((arg) => arg === "-p" || arg === "--print");
+    }
+    pid = proc.ppid;
+  }
+  return false;
+}
+function sessionSkipReason(input, config, state = {}, env = process.env) {
+  if (!config.captureSubagents && isSubagentSession(input))
+    return "subagent";
+  if (isOrchestratedSession(env)) {
+    return config.captureOrchestrated ? null : "orchestrated";
+  }
+  if (config.captureHeadless)
+    return null;
+  if (input.is_background_agent === true || state.backgroundAgent)
+    return "headless";
+  return isCursorCliPrintMode(env) ? "headless" : null;
+}
+
+// src/repeat-guard.ts
+import { createHash as createHash5 } from "node:crypto";
+import {
+  mkdirSync as mkdirSync2,
+  readdirSync,
+  rmSync as rmSync2,
+  statSync,
+  writeFileSync as writeFileSync2
+} from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { join as join4 } from "node:path";
+var MAX_ENTRIES = 500;
+var RECALL_WINDOW_MS = 10 * 60000;
+function guardDir(name) {
+  return join4(homedir3(), ".supermemory-cursor", name);
+}
+function textKey(containerTag, text) {
+  return createHash5("sha256").update(`${containerTag}
+${text.trim().replace(/\s+/g, " ")}`).digest("hex");
+}
+function prune(dir, maxAgeMs) {
+  const now = Date.now();
+  readdirSync(dir).flatMap((name) => {
+    try {
+      return [{ name, mtime: statSync(join4(dir, name)).mtimeMs }];
+    } catch {
+      return [];
+    }
+  }).sort((a, b) => b.mtime - a.mtime).forEach((entry, index) => {
+    if (index >= MAX_ENTRIES || maxAgeMs !== undefined && now - entry.mtime > maxAgeMs) {
+      rmSync2(join4(dir, entry.name), { force: true });
+    }
+  });
+}
+function claim(dir, key, maxAgeMs) {
+  const file = join4(dir, key);
+  try {
+    mkdirSync2(dir, { recursive: true, mode: 448 });
+    writeFileSync2(file, "", { flag: "wx", mode: 384 });
+    prune(dir, maxAgeMs);
+    return true;
+  } catch (error) {
+    if (error.code !== "EEXIST")
+      return true;
+  }
+  try {
+    if (maxAgeMs === undefined || Date.now() - statSync(file).mtimeMs < maxAgeMs) {
+      return false;
+    }
+    writeFileSync2(file, "", { mode: 384 });
+  } catch {}
+  return true;
+}
+function claimRecallQuery(containerTag, query) {
+  return claim(guardDir("recall-queries"), textKey(containerTag, query), RECALL_WINDOW_MS);
+}
+function releaseRecallQuery(containerTag, query) {
+  rmSync2(join4(guardDir("recall-queries"), textKey(containerTag, query)), { force: true });
+}
+
 // src/hooks/types.ts
 function workspaceRoot(input) {
   return input.workspace_roots?.[0] || process.env.CURSOR_PROJECT_DIR || process.cwd();
@@ -4351,7 +4490,7 @@ function resultText(result) {
   return String(result.memory ?? result.chunk ?? result.content ?? result.title ?? "").trim();
 }
 function hashText(text) {
-  return createHash5("sha256").update(text.toLowerCase()).digest("hex");
+  return createHash6("sha256").update(text.toLowerCase()).digest("hex");
 }
 function selectRecallResults(profiles, seenHashes, threshold = MIN_SIMILARITY) {
   const seen = new Set(seenHashes);
@@ -4393,6 +4532,9 @@ ${lines.join(`
 `)}
 </supermemory-recall>`;
 }
+function claimRecall(config, containerTag, query) {
+  return !config.dedupeRecallQueries || claimRecallQuery(containerTag, query);
+}
 async function runPromptRecall(input) {
   const prompt = input.prompt;
   if (shouldSkipPrompt(prompt)) {
@@ -4409,8 +4551,21 @@ async function runPromptRecall(input) {
     const auth2 = () => getAuthToken(config);
     const id = conversationId(input);
     const state = readHookState(id);
+    if (sessionSkipReason(input, config, state)) {
+      process.stdout.write(JSON.stringify({ continue: true }));
+      return;
+    }
     const tags = getResolvedTags(root, config);
-    const profiles = await getSearches(config.baseUrl, auth2, tags.allReads, prompt.slice(0, MAX_QUERY_LENGTH), config.apiVersion);
+    const query = prompt.slice(0, MAX_QUERY_LENGTH);
+    if (!claimRecall(config, tags.canonical, query)) {
+      process.stdout.write(JSON.stringify({ continue: true }));
+      return;
+    }
+    const profiles = await getSearches(config.baseUrl, auth2, tags.allReads, query, config.apiVersion).catch((error) => {
+      if (config.dedupeRecallQueries)
+        releaseRecallQuery(tags.canonical, query);
+      throw error;
+    });
     const { fresh, hashes } = selectRecallResults(profiles, state.seenHashes ?? [], Math.max(MIN_SIMILARITY, config.similarityThreshold));
     writeHookState(id, fresh.length > 0 ? {
       pendingContext: formatRecall(fresh, tags.canonical),
@@ -4431,5 +4586,6 @@ export {
   shouldSkipPrompt,
   selectRecallResults,
   runPromptRecall,
-  formatRecall
+  formatRecall,
+  claimRecall
 };

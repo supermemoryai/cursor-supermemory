@@ -3,6 +3,9 @@ import { loadConfig, getAuthToken, isConfigured } from "../config.ts";
 import { getSearches } from "../hook-api.ts";
 import { readHookState, writeHookState } from "../hook-state.ts";
 import { getResolvedTags } from "../tags.ts";
+import { sessionSkipReason } from "../session-filter.ts";
+import { claimRecallQuery, releaseRecallQuery } from "../repeat-guard.ts";
+import type { Config } from "../config.ts";
 import {
   conversationId,
   type CursorHookInput,
@@ -100,6 +103,11 @@ ${lines.join("\n")}
 </supermemory-recall>`;
 }
 
+// The one gate a recall query passes before it reaches the API; extra skip rules belong here.
+export function claimRecall(config: Config, containerTag: string, query: string): boolean {
+  return !config.dedupeRecallQueries || claimRecallQuery(containerTag, query);
+}
+
 export async function runPromptRecall(input: CursorHookInput): Promise<void> {
   const prompt = input.prompt;
   if (shouldSkipPrompt(prompt)) {
@@ -118,14 +126,26 @@ export async function runPromptRecall(input: CursorHookInput): Promise<void> {
 
     const id = conversationId(input);
     const state = readHookState(id);
+    if (sessionSkipReason(input, config, state)) {
+      process.stdout.write(JSON.stringify({ continue: true }));
+      return;
+    }
     const tags = getResolvedTags(root, config);
+    const query = prompt!.slice(0, MAX_QUERY_LENGTH);
+    if (!claimRecall(config, tags.canonical, query)) {
+      process.stdout.write(JSON.stringify({ continue: true }));
+      return;
+    }
     const profiles = await getSearches(
       config.baseUrl,
       auth,
       tags.allReads,
-      prompt!.slice(0, MAX_QUERY_LENGTH),
+      query,
       config.apiVersion,
-    );
+    ).catch((error) => {
+      if (config.dedupeRecallQueries) releaseRecallQuery(tags.canonical, query);
+      throw error;
+    });
     const { fresh, hashes } = selectRecallResults(
       profiles,
       state.seenHashes ?? [],
