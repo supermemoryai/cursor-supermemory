@@ -5,7 +5,6 @@
 - Skip Supermemory entirely (profile, recall and capture) for subagent sessions and headless runs (`cursor-agent -p`, background agents). `captureSubagents` / `SUPERMEMORY_CAPTURE_SUBAGENTS=true` and `captureHeadless` / `SUPERMEMORY_CAPTURE_HEADLESS=true` restore the previous behaviour.
 - Treat Conductor and Vibe Kanban sessions as interactive; `captureOrchestrated: false` skips them.
 - Recall an identical prompt once per container per 10 minutes on a machine (`dedupeRecallQueries`), and capture an opening prompt already captured from this machine as a one-line marker (`dedupeOpeningPrompt`).
-- Worktrees of a bare repository without a remote now share one repository tag; their former per-worktree tag is still read.
 
 ## 1.3.1
 

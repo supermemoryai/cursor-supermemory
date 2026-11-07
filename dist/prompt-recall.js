@@ -4001,14 +4001,6 @@ function getGitRoot(directory) {
     if (basename(resolvedCommonDir) === ".git" && !resolvedCommonDir.includes(`${sep}.git${sep}`)) {
       return dirname(resolvedCommonDir);
     }
-    const gitDir = resolve(directory, execSync("git rev-parse --git-dir", {
-      cwd: directory,
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"]
-    }).trim());
-    if (gitDir !== resolvedCommonDir && !resolvedCommonDir.includes(`${sep}.git${sep}`)) {
-      return resolvedCommonDir;
-    }
     return execSync("git rev-parse --show-toplevel", {
       cwd: directory,
       encoding: "utf-8",
@@ -4193,29 +4185,6 @@ function getGeneratedRepoTag(directory) {
   const name = sanitizeRepoName(getProjectName(directory)).slice(0, 72).replace(/_+$/g, "");
   return `repo_${name || "unknown"}__${getProjectIdentity(directory)}`;
 }
-function getLegacyWorktreeTag(directory) {
-  const basePath = getProjectBasePath(directory);
-  if (process.env.SUPERMEMORY_ISOLATE_WORKTREES === "true" || existsSync(join3(basePath, ".git")) || getGitRepoInfo(basePath).normalizedRemote) {
-    return null;
-  }
-  try {
-    const topLevel = execSync("git rev-parse --show-toplevel", {
-      cwd: directory,
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"]
-    }).trim();
-    if (!topLevel || topLevel === basePath)
-      return null;
-    let identity = topLevel;
-    try {
-      identity = realpathSync.native(topLevel);
-    } catch {}
-    const name = sanitizeRepoName(basename(topLevel) || "unknown").slice(0, 72).replace(/_+$/g, "");
-    return `repo_${name || "unknown"}__${sha2562(`path:${identity}`)}`;
-  } catch {
-    return null;
-  }
-}
 function getLegacyRepoTag(directory) {
   return `repo_${sanitizeRepoName(getProjectName(directory))}`;
 }
@@ -4295,7 +4264,6 @@ function getLegacyOpenCodeTags(directory) {
 }
 function getResolvedTags(directory, config) {
   const generated = getGeneratedRepoTag(directory);
-  const legacyWorktree = getLegacyWorktreeTag(directory);
   const cursorPersonal = getLegacyCursorUserTags(directory, config);
   const cursorProjects = getLegacyCursorProjectTags(directory, config);
   const claude = getLegacyClaudeTags(directory);
@@ -4305,7 +4273,6 @@ function getResolvedTags(directory, config) {
   const personalReads = uniqueTags([
     canonical,
     generated,
-    legacyWorktree,
     ...cursorPersonal,
     ...claude.personal,
     ...codex.personal,
@@ -4314,7 +4281,6 @@ function getResolvedTags(directory, config) {
   const projectReads = uniqueTags([
     canonical,
     generated,
-    legacyWorktree,
     ...cursorProjects,
     ...claude.project,
     ...codex.project,

@@ -58,21 +58,6 @@ export function getGitRoot(directory: string): string | null {
       return dirname(resolvedCommonDir);
     }
 
-    const gitDir = resolve(
-      directory,
-      execSync("git rev-parse --git-dir", {
-        cwd: directory,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      }).trim(),
-    );
-    if (
-      gitDir !== resolvedCommonDir &&
-      !resolvedCommonDir.includes(`${sep}.git${sep}`)
-    ) {
-      return resolvedCommonDir;
-    }
-
     return (
       execSync("git rev-parse --show-toplevel", {
         cwd: directory,
@@ -339,36 +324,6 @@ export function getGeneratedRepoTag(directory: string): string {
   return `repo_${name || "unknown"}__${getProjectIdentity(directory)}`;
 }
 
-// Worktrees of a bare repository without a remote were keyed by their own checkout before sharing the repository tag.
-function getLegacyWorktreeTag(directory: string): string | null {
-  const basePath = getProjectBasePath(directory);
-  if (
-    process.env.SUPERMEMORY_ISOLATE_WORKTREES === "true" ||
-    existsSync(join(basePath, ".git")) ||
-    getGitRepoInfo(basePath).normalizedRemote
-  ) {
-    return null;
-  }
-  try {
-    const topLevel = execSync("git rev-parse --show-toplevel", {
-      cwd: directory,
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
-    if (!topLevel || topLevel === basePath) return null;
-    let identity = topLevel;
-    try {
-      identity = realpathSync.native(topLevel);
-    } catch {}
-    const name = sanitizeRepoName(basename(topLevel) || "unknown")
-      .slice(0, 72)
-      .replace(/_+$/g, "");
-    return `repo_${name || "unknown"}__${sha256(`path:${identity}`)}`;
-  } catch {
-    return null;
-  }
-}
-
 function getLegacyRepoTag(directory: string): string {
   return `repo_${sanitizeRepoName(getProjectName(directory))}`;
 }
@@ -508,7 +463,6 @@ export function getResolvedTags(
   config: Config,
 ): ResolvedTags {
   const generated = getGeneratedRepoTag(directory);
-  const legacyWorktree = getLegacyWorktreeTag(directory);
   const cursorPersonal = getLegacyCursorUserTags(directory, config);
   const cursorProjects = getLegacyCursorProjectTags(directory, config);
   const claude = getLegacyClaudeTags(directory);
@@ -524,7 +478,6 @@ export function getResolvedTags(
   const personalReads = uniqueTags([
     canonical,
     generated,
-    legacyWorktree,
     ...cursorPersonal,
     ...claude.personal,
     ...codex.personal,
@@ -533,7 +486,6 @@ export function getResolvedTags(
   const projectReads = uniqueTags([
     canonical,
     generated,
-    legacyWorktree,
     ...cursorProjects,
     ...claude.project,
     ...codex.project,
