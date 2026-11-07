@@ -4,8 +4,11 @@ import { getResolvedTags } from "../tags.ts";
 import { getProfiles, resolveApiVersion } from "../hook-api.ts";
 import { formatContainerDirective, formatSessionContext } from "../context.ts";
 import { pluginRootFromEnv, readStdinText } from "../runtime.ts";
+import { writeHookState } from "../hook-state.ts";
+import { sessionSkipReason } from "../session-filter.ts";
+import { conversationId, type CursorHookInput } from "./types.ts";
 
-interface SessionStartInput {
+interface SessionStartInput extends CursorHookInput {
   workspace_roots: string[];
   user_email?: string;
   session_id: string;
@@ -19,6 +22,13 @@ async function main() {
 
   const workspaceRoot = input.workspace_roots?.[0] || process.cwd();
   const config = loadConfig(workspaceRoot);
+  if (input.is_background_agent === true) {
+    writeHookState(conversationId(input), { backgroundAgent: true });
+  }
+  if (sessionSkipReason(input, config)) {
+    ok();
+    return;
+  }
   const notConnected = () => {
     const pluginRoot = pluginRootFromEnv();
     const loginCmd = pluginRoot

@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 export interface HookState {
+  backgroundAgent?: boolean;
   capturedEntries?: number;
   pendingContext?: string;
   pendingGeneration?: string;

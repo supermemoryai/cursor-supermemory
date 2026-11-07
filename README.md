@@ -96,6 +96,11 @@ run the `/supermemory-config` command.
 | `SUPERMEMORY_USER_TAG` | Legacy Cursor personal container to continue reading |
 | `SUPERMEMORY_PROJECT_TAG` | Legacy Cursor project container to continue reading |
 | `CURSOR_USER_EMAIL` | Used only to find legacy Cursor personal memories |
+| `SUPERMEMORY_CAPTURE_SUBAGENTS` | `true` restores recall and capture for subagent sessions; overrides `captureSubagents` |
+| `SUPERMEMORY_CAPTURE_HEADLESS` | `true` restores recall and capture for headless runs; overrides `captureHeadless` |
+| `SUPERMEMORY_CAPTURE_ORCHESTRATED` | `false` skips recall and capture in Conductor and Vibe Kanban sessions; overrides `captureOrchestrated` |
+| `SUPERMEMORY_DEDUPE_OPENING_PROMPT` | `false` always sends a session's opening prompt in full; overrides `dedupeOpeningPrompt` |
+| `SUPERMEMORY_DEDUPE_RECALL_QUERIES` | `false` recalls repeated identical prompts every time; overrides `dedupeRecallQueries` |
 
 ### Global config — `~/.config/cursor/supermemory.json`
 
@@ -144,8 +149,37 @@ Per-workspace overrides. Add to `.gitignore` if it contains an API key. Project 
 | `signalExtraction` | Capture only turns containing durable-signal keywords | `false` |
 | `signalKeywords` | Keywords that trigger signal-based capture | `remember`, `architecture`, `decision`, `bug`, `fix` |
 | `signalTurnsBefore` | Number of nearby turns retained around a signal | `3` |
+| `captureSubagents` | Recall and capture in subagent sessions | `false` |
+| `captureHeadless` | Recall and capture in headless runs (`cursor-agent -p`, background agents) | `false` |
+| `captureOrchestrated` | Recall and capture in sessions launched by Conductor or Vibe Kanban | `true` |
+| `dedupeOpeningPrompt` | Replace an opening prompt already captured from this machine with a one-line marker | `true` |
+| `dedupeRecallQueries` | Skip recall for a prompt already recalled against the same container in the last 10 minutes | `true` |
 
 Create or edit the config file directly, or run the `/supermemory-config` command.
+
+### Subagents, headless runs and helper prompts
+
+By default the hooks make no Supermemory calls (no session profile, recall or capture) for sessions the
+host runs on its own. Each flag above restores both recall and capture for its class.
+
+- **Subagents.** Cursor fires only tool hooks inside a Task subagent; those carry the subagent's own
+  transcript under `agent-transcripts/<parent>/subagents/`, and Cursor's subagent payloads carry
+  `parent_conversation_id` or `parent_tool_call_id`. Grok sends `subagentType` only from subagent
+  sessions. Any of these skips the session unless `captureSubagents` is set.
+- **Headless runs.** `cursor-agent -p` / `--print` sends the same hook payload and environment as an
+  interactive session, so the hooks read the flag from the `cursor-agent` process itself (its launcher
+  exports `CURSOR_INVOKED_AS`). Background agents are recognised by `is_background_agent: true`.
+  `captureHeadless` turns this off.
+- **Orchestrators.** Sessions with `CONDUCTOR_WORKSPACE_PATH`, `CONDUCTOR_SESSION_ID` or `VK_WORKSPACE_ID` in
+  the environment count as interactive, even when the orchestrator drives the host headlessly. Set
+  `captureOrchestrated: false` to skip them.
+- **Helper prompts.** Cursor's chat-title generation and similar helper calls never reach plugin hooks, so
+  there is nothing to skip.
+
+Swarms that replay one task prompt are deduplicated on this machine: an identical prompt recalled against
+the same container in the last 10 minutes is not recalled again, and an opening prompt already captured
+for the same container is sent as a one-line marker. The markers live under `~/.supermemory-cursor/`
+(`recall-queries/`, `opening-prompts/`, 500 entries each).
 
 ### REST compatibility
 

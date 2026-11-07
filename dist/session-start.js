@@ -289,7 +289,12 @@ var DEFAULTS = {
   signalTurnsBefore: 3,
   repoContainerTag: null,
   userContainerTag: null,
-  projectContainerTag: null
+  projectContainerTag: null,
+  captureSubagents: false,
+  captureHeadless: false,
+  captureOrchestrated: true,
+  dedupeOpeningPrompt: true,
+  dedupeRecallQueries: true
 };
 function readJson2(filePath) {
   try {
@@ -314,6 +319,14 @@ function findProjectConfig(cwd) {
   }
   return null;
 }
+function flag(envName, value, fallback) {
+  const env = process.env[envName]?.trim().toLowerCase();
+  if (env === "true" || env === "1")
+    return true;
+  if (env === "false" || env === "0")
+    return false;
+  return typeof value === "boolean" ? value : fallback;
+}
 function loadConfig(cwd) {
   const projectConfig = findProjectConfig(cwd || process.cwd());
   const globalConfig = readJson2(GLOBAL_CONFIG_PATH);
@@ -331,7 +344,12 @@ function loadConfig(cwd) {
     signalTurnsBefore: merged.signalTurnsBefore,
     repoContainerTag: merged.repoContainerTag,
     userContainerTag: merged.userContainerTag,
-    projectContainerTag: merged.projectContainerTag
+    projectContainerTag: merged.projectContainerTag,
+    captureSubagents: flag("SUPERMEMORY_CAPTURE_SUBAGENTS", merged.captureSubagents, DEFAULTS.captureSubagents),
+    captureHeadless: flag("SUPERMEMORY_CAPTURE_HEADLESS", merged.captureHeadless, DEFAULTS.captureHeadless),
+    captureOrchestrated: flag("SUPERMEMORY_CAPTURE_ORCHESTRATED", merged.captureOrchestrated, DEFAULTS.captureOrchestrated),
+    dedupeOpeningPrompt: flag("SUPERMEMORY_DEDUPE_OPENING_PROMPT", merged.dedupeOpeningPrompt, DEFAULTS.dedupeOpeningPrompt),
+    dedupeRecallQueries: flag("SUPERMEMORY_DEDUPE_RECALL_QUERIES", merged.dedupeRecallQueries, DEFAULTS.dedupeRecallQueries)
   };
 }
 function getApiKey(config) {
@@ -431,6 +449,14 @@ function getGitRoot(directory) {
     const resolvedCommonDir = resolve(directory, gitCommonDir);
     if (basename(resolvedCommonDir) === ".git" && !resolvedCommonDir.includes(`${sep}.git${sep}`)) {
       return dirname(resolvedCommonDir);
+    }
+    const gitDir = resolve(directory, execSync("git rev-parse --git-dir", {
+      cwd: directory,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"]
+    }).trim());
+    if (gitDir !== resolvedCommonDir && !resolvedCommonDir.includes(`${sep}.git${sep}`)) {
+      return resolvedCommonDir;
     }
     return execSync("git rev-parse --show-toplevel", {
       cwd: directory,
@@ -616,6 +642,29 @@ function getGeneratedRepoTag(directory) {
   const name = sanitizeRepoName(getProjectName(directory)).slice(0, 72).replace(/_+$/g, "");
   return `repo_${name || "unknown"}__${getProjectIdentity(directory)}`;
 }
+function getLegacyWorktreeTag(directory) {
+  const basePath = getProjectBasePath(directory);
+  if (process.env.SUPERMEMORY_ISOLATE_WORKTREES === "true" || existsSync(join(basePath, ".git")) || getGitRepoInfo(basePath).normalizedRemote) {
+    return null;
+  }
+  try {
+    const topLevel = execSync("git rev-parse --show-toplevel", {
+      cwd: directory,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"]
+    }).trim();
+    if (!topLevel || topLevel === basePath)
+      return null;
+    let identity = topLevel;
+    try {
+      identity = realpathSync.native(topLevel);
+    } catch {}
+    const name = sanitizeRepoName(basename(topLevel) || "unknown").slice(0, 72).replace(/_+$/g, "");
+    return `repo_${name || "unknown"}__${sha256(`path:${identity}`)}`;
+  } catch {
+    return null;
+  }
+}
 function getLegacyRepoTag(directory) {
   return `repo_${sanitizeRepoName(getProjectName(directory))}`;
 }
@@ -695,6 +744,7 @@ function getLegacyOpenCodeTags(directory) {
 }
 function getResolvedTags(directory, config) {
   const generated = getGeneratedRepoTag(directory);
+  const legacyWorktree = getLegacyWorktreeTag(directory);
   const cursorPersonal = getLegacyCursorUserTags(directory, config);
   const cursorProjects = getLegacyCursorProjectTags(directory, config);
   const claude = getLegacyClaudeTags(directory);
@@ -704,6 +754,7 @@ function getResolvedTags(directory, config) {
   const personalReads = uniqueTags([
     canonical,
     generated,
+    legacyWorktree,
     ...cursorPersonal,
     ...claude.personal,
     ...codex.personal,
@@ -712,6 +763,7 @@ function getResolvedTags(directory, config) {
   const projectReads = uniqueTags([
     canonical,
     generated,
+    legacyWorktree,
     ...cursorProjects,
     ...claude.project,
     ...codex.project,
@@ -4301,6 +4353,106 @@ function pluginRootFromEnv(env = process.env) {
   return [env.CURSOR_PLUGIN_ROOT, env.CLAUDE_PLUGIN_ROOT, env.GROK_PLUGIN_ROOT].find((value) => !!value && !value.includes("${"));
 }
 
+// src/hook-state.ts
+import { createHash as createHash4 } from "node:crypto";
+import {
+  mkdirSync,
+  readFileSync as readFileSync2,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { join as join3 } from "node:path";
+function statePath(conversationId) {
+  const id = createHash4("sha256").update(conversationId || "unknown").digest("hex").slice(0, 32);
+  return join3(homedir2(), ".supermemory-cursor", "hook-state", `${id}.json`);
+}
+function readHookState(conversationId) {
+  try {
+    return JSON.parse(readFileSync2(statePath(conversationId), "utf8"));
+  } catch {
+    return {};
+  }
+}
+function writeHookState(conversationId, updates) {
+  const filePath = statePath(conversationId);
+  mkdirSync(join3(homedir2(), ".supermemory-cursor", "hook-state"), {
+    recursive: true,
+    mode: 448
+  });
+  const tempPath = `${filePath}.${process.pid}.tmp`;
+  writeFileSync(tempPath, `${JSON.stringify({ ...readHookState(conversationId), ...updates })}
+`, { mode: 384 });
+  renameSync(tempPath, filePath);
+}
+
+// src/session-filter.ts
+import { execFileSync } from "node:child_process";
+import { readFileSync as readFileSync3 } from "node:fs";
+import { basename as basename2 } from "node:path";
+var ORCHESTRATOR_ENV = [
+  "CONDUCTOR_WORKSPACE_PATH",
+  "CONDUCTOR_SESSION_ID",
+  "VK_WORKSPACE_ID"
+];
+function isSubagentSession(input) {
+  return Boolean(input.parent_conversation_id || input.parent_tool_call_id || input.subagentType || input.subagent_type || /[\\/]agent-transcripts[\\/][^\\/]+[\\/]subagents[\\/]/.test(input.transcript_path ?? ""));
+}
+function isOrchestratedSession(env = process.env) {
+  return ORCHESTRATOR_ENV.some((name) => !!env[name]);
+}
+function readProcess(pid) {
+  try {
+    const argv = readFileSync3(`/proc/${pid}/cmdline`, "utf8").split("\x00").filter(Boolean);
+    const stat = readFileSync3(`/proc/${pid}/stat`, "utf8");
+    return { ppid: Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]), argv };
+  } catch {}
+  try {
+    const match = execFileSync("ps", ["-o", "ppid=,args=", "-p", String(pid)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim().match(/^(\d+)\s+(.*)$/s);
+    return match ? { ppid: Number(match[1]), argv: match[2].split(/\s+/) } : null;
+  } catch {
+    return null;
+  }
+}
+function isCursorCliPrintMode(env = process.env, read = readProcess, startPid = process.ppid) {
+  const invokedAs = env.CURSOR_INVOKED_AS;
+  if (!invokedAs)
+    return false;
+  let pid = startPid;
+  for (let depth = 0;depth < 8 && pid > 1; depth++) {
+    const proc = read(pid);
+    if (!proc)
+      return false;
+    if (proc.argv[0] && basename2(proc.argv[0]) === invokedAs) {
+      const end = proc.argv.indexOf("--");
+      return proc.argv.slice(1, end < 0 ? undefined : end).some((arg) => arg === "-p" || arg === "--print");
+    }
+    pid = proc.ppid;
+  }
+  return false;
+}
+function sessionSkipReason(input, config, state = {}, env = process.env) {
+  if (!config.captureSubagents && isSubagentSession(input))
+    return "subagent";
+  if (isOrchestratedSession(env)) {
+    return config.captureOrchestrated ? null : "orchestrated";
+  }
+  if (config.captureHeadless)
+    return null;
+  if (input.is_background_agent === true || state.backgroundAgent)
+    return "headless";
+  return isCursorCliPrintMode(env) ? "headless" : null;
+}
+
+// src/hooks/types.ts
+function conversationId(input) {
+  return input.conversation_id || input.session_id || "unknown";
+}
+
 // src/hooks/session-start.ts
 var ok = () => process.stdout.write(JSON.stringify({}));
 async function main() {
@@ -4308,6 +4460,13 @@ async function main() {
   const input = JSON.parse(raw);
   const workspaceRoot = input.workspace_roots?.[0] || process.cwd();
   const config = loadConfig(workspaceRoot);
+  if (input.is_background_agent === true) {
+    writeHookState(conversationId(input), { backgroundAgent: true });
+  }
+  if (sessionSkipReason(input, config)) {
+    ok();
+    return;
+  }
   const notConnected = () => {
     const pluginRoot = pluginRootFromEnv();
     const loginCmd = pluginRoot ? `node "${pluginRoot}/dist/cli.js" login` : "node dist/cli.js login";

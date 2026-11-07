@@ -40,6 +40,11 @@ export interface Config {
   repoContainerTag: string | null;
   userContainerTag: string | null;
   projectContainerTag: string | null;
+  captureSubagents: boolean;
+  captureHeadless: boolean;
+  captureOrchestrated: boolean;
+  dedupeOpeningPrompt: boolean;
+  dedupeRecallQueries: boolean;
 }
 
 const DEFAULTS: Omit<Config, "apiKey"> = {
@@ -54,6 +59,11 @@ const DEFAULTS: Omit<Config, "apiKey"> = {
   repoContainerTag: null,
   userContainerTag: null,
   projectContainerTag: null,
+  captureSubagents: false,
+  captureHeadless: false,
+  captureOrchestrated: true,
+  dedupeOpeningPrompt: true,
+  dedupeRecallQueries: true,
 };
 
 function readJson(filePath: string): Record<string, any> | null {
@@ -77,6 +87,13 @@ function findProjectConfig(cwd: string): Record<string, any> | null {
     dir = parent;
   }
   return null;
+}
+
+function flag(envName: string, value: unknown, fallback: boolean): boolean {
+  const env = process.env[envName]?.trim().toLowerCase();
+  if (env === "true" || env === "1") return true;
+  if (env === "false" || env === "0") return false;
+  return typeof value === "boolean" ? value : fallback;
 }
 
 export function loadConfig(cwd?: string): Config {
@@ -107,6 +124,11 @@ export function loadConfig(cwd?: string): Config {
     repoContainerTag: merged.repoContainerTag,
     userContainerTag: merged.userContainerTag,
     projectContainerTag: merged.projectContainerTag,
+    captureSubagents: flag("SUPERMEMORY_CAPTURE_SUBAGENTS", merged.captureSubagents, DEFAULTS.captureSubagents),
+    captureHeadless: flag("SUPERMEMORY_CAPTURE_HEADLESS", merged.captureHeadless, DEFAULTS.captureHeadless),
+    captureOrchestrated: flag("SUPERMEMORY_CAPTURE_ORCHESTRATED", merged.captureOrchestrated, DEFAULTS.captureOrchestrated),
+    dedupeOpeningPrompt: flag("SUPERMEMORY_DEDUPE_OPENING_PROMPT", merged.dedupeOpeningPrompt, DEFAULTS.dedupeOpeningPrompt),
+    dedupeRecallQueries: flag("SUPERMEMORY_DEDUPE_RECALL_QUERIES", merged.dedupeRecallQueries, DEFAULTS.dedupeRecallQueries),
   };
 }
 
