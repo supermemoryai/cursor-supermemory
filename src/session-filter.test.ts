@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { loadConfig } from "./config.ts";
-import { isCursorCliPrintMode, sessionSkipReason } from "./session-filter.ts";
+import { hasPrintFlag, isCursorCliPrintMode, sessionSkipReason } from "./session-filter.ts";
 
 const config = loadConfig("/nonexistent");
 
@@ -22,6 +22,20 @@ describe("session filter", () => {
     expect(isCursorCliPrintMode(env, processes(["--force", "explain -p"]), 30)).toBe(false);
     expect(isCursorCliPrintMode(env, processes(["--", "-p"]), 30)).toBe(false);
     expect(isCursorCliPrintMode({}, processes(["-p", "fix it"]), 30)).toBe(false);
+  });
+
+  test("stops at the prompt even when ps splits it into words", () => {
+    const env = { CURSOR_INVOKED_AS: "cursor-agent" };
+    const processes = (args: string[]) =>
+      tree({
+        30: { ppid: 10, argv: ["node", "/plugin/dist/capture.js"] },
+        10: { ppid: 1, argv: ["cursor-agent", "--use-system-ca", "/x/index.js", ...args] },
+      });
+    expect(isCursorCliPrintMode(env, processes(["explain", "what", "the", "-p", "flag", "does"]), 30)).toBe(false);
+    expect(isCursorCliPrintMode(env, processes(["--model", "gpt-5", "-p", "fix", "it"]), 30)).toBe(true);
+    expect(hasPrintFlag(["-fp", "go"])).toBe(true);
+    expect(hasPrintFlag(["--resume", "chat-1", "--print"])).toBe(true);
+    expect(hasPrintFlag(["--output-format", "json", "fix", "-p"])).toBe(false);
   });
 
   test("orchestrator sessions count as interactive", () => {
@@ -54,5 +68,21 @@ describe("session filter", () => {
     expect(sessionSkipReason({ subagentType: "explore" }, { ...config, captureSubagents: true }, {}, {})).toBeNull();
     expect(sessionSkipReason({}, { ...config, captureHeadless: true }, { backgroundAgent: true }, {})).toBeNull();
     expect(sessionSkipReason({}, config, { backgroundAgent: true }, {})).toBe("headless");
+  });
+
+  test("env flags accept yes/on/no/off and override config both ways", () => {
+    try {
+      for (const [value, expected] of [["YES", true], ["on", true], ["1", true], ["No", false], ["off", false], ["0", false]] as const) {
+        process.env.SUPERMEMORY_CAPTURE_HEADLESS = value;
+        process.env.SUPERMEMORY_CAPTURE_ORCHESTRATED = value;
+        expect(loadConfig("/nonexistent").captureHeadless).toBe(expected);
+        expect(loadConfig("/nonexistent").captureOrchestrated).toBe(expected);
+      }
+      process.env.SUPERMEMORY_CAPTURE_HEADLESS = "maybe";
+      expect(loadConfig("/nonexistent").captureHeadless).toBe(false);
+    } finally {
+      delete process.env.SUPERMEMORY_CAPTURE_HEADLESS;
+      delete process.env.SUPERMEMORY_CAPTURE_ORCHESTRATED;
+    }
   });
 });

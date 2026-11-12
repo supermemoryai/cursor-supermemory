@@ -301,9 +301,9 @@ function findProjectConfig(cwd) {
 }
 function flag(envName, value, fallback) {
   const env = process.env[envName]?.trim().toLowerCase();
-  if (env === "true" || env === "1")
+  if (env && ["true", "1", "yes", "on"].includes(env))
     return true;
-  if (env === "false" || env === "0")
+  if (env && ["false", "0", "no", "off"].includes(env))
     return false;
   return typeof value === "boolean" ? value : fallback;
 }
@@ -4266,6 +4266,22 @@ function getResolvedTags(directory, config) {
 import { execFileSync } from "node:child_process";
 import { readFileSync as readFileSync3 } from "node:fs";
 import { basename as basename2 } from "node:path";
+var VALUE_OPTIONS = new Set([
+  "--api-key",
+  "-H",
+  "--header",
+  "-e",
+  "--endpoint",
+  "--output-format",
+  "--mode",
+  "--model",
+  "--sandbox",
+  "--workspace",
+  "--add-dir",
+  "--plugin-dir",
+  "--worktree-base"
+]);
+var OPTIONAL_VALUE_OPTIONS = new Set(["--resume", "-w", "--worktree"]);
 var ORCHESTRATOR_ENV = [
   "CONDUCTOR_WORKSPACE_PATH",
   "CONDUCTOR_SESSION_ID",
@@ -4293,6 +4309,31 @@ function readProcess(pid) {
     return null;
   }
 }
+function hasPrintFlag(args) {
+  for (let i = 0;i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--" || arg === "-" || !arg.startsWith("-"))
+      return false;
+    if (arg === "-p" || arg === "--print")
+      return true;
+    if (arg.includes("="))
+      continue;
+    const next = args[i + 1];
+    const takesNext = (option) => VALUE_OPTIONS.has(option) || OPTIONAL_VALUE_OPTIONS.has(option) && next !== undefined && !next.startsWith("-");
+    if (!arg.startsWith("--") && arg.length > 2) {
+      const flags = arg.slice(1);
+      const value = [...flags].findIndex((letter) => "Hew".includes(letter));
+      if (flags.slice(0, value < 0 ? undefined : value).includes("p"))
+        return true;
+      if (value === flags.length - 1 && takesNext(`-${flags[value]}`))
+        i++;
+      continue;
+    }
+    if (takesNext(arg))
+      i++;
+  }
+  return false;
+}
 function isCursorCliPrintMode(env = process.env, read = readProcess, startPid = process.ppid) {
   const invokedAs = env.CURSOR_INVOKED_AS;
   if (!invokedAs)
@@ -4303,8 +4344,8 @@ function isCursorCliPrintMode(env = process.env, read = readProcess, startPid = 
     if (!proc)
       return false;
     if (proc.argv[0] && basename2(proc.argv[0]) === invokedAs) {
-      const end = proc.argv.indexOf("--");
-      return proc.argv.slice(1, end < 0 ? undefined : end).some((arg) => arg === "-p" || arg === "--print");
+      const script = proc.argv.slice(1).findIndex((arg) => !arg.startsWith("--")) + 1;
+      return hasPrintFlag(proc.argv.slice(/[\\/]index\.js$/.test(proc.argv[script] ?? "") ? script + 1 : 1));
     }
     pid = proc.ppid;
   }

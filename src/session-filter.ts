@@ -12,6 +12,23 @@ interface ProcessInfo {
   argv: string[];
 }
 
+const VALUE_OPTIONS = new Set([
+  "--api-key",
+  "-H",
+  "--header",
+  "-e",
+  "--endpoint",
+  "--output-format",
+  "--mode",
+  "--model",
+  "--sandbox",
+  "--workspace",
+  "--add-dir",
+  "--plugin-dir",
+  "--worktree-base",
+]);
+const OPTIONAL_VALUE_OPTIONS = new Set(["--resume", "-w", "--worktree"]);
+
 const ORCHESTRATOR_ENV = [
   "CONDUCTOR_WORKSPACE_PATH",
   "CONDUCTOR_SESSION_ID",
@@ -52,6 +69,29 @@ function readProcess(pid: number): ProcessInfo | null {
   }
 }
 
+// Reads cursor-agent options up to the first positional (the prompt), so prompt words never count as -p.
+export function hasPrintFlag(args: string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--" || arg === "-" || !arg.startsWith("-")) return false;
+    if (arg === "-p" || arg === "--print") return true;
+    if (arg.includes("=")) continue;
+    const next = args[i + 1];
+    const takesNext = (option: string) =>
+      VALUE_OPTIONS.has(option) ||
+      (OPTIONAL_VALUE_OPTIONS.has(option) && next !== undefined && !next.startsWith("-"));
+    if (!arg.startsWith("--") && arg.length > 2) {
+      const flags = arg.slice(1);
+      const value = [...flags].findIndex((letter) => "Hew".includes(letter));
+      if (flags.slice(0, value < 0 ? undefined : value).includes("p")) return true;
+      if (value === flags.length - 1 && takesNext(`-${flags[value]}`)) i++;
+      continue;
+    }
+    if (takesNext(arg)) i++;
+  }
+  return false;
+}
+
 // The cursor-agent launcher exports CURSOR_INVOKED_AS and execs node under that name, so the CLI's own argv carries -p/--print.
 export function isCursorCliPrintMode(
   env: NodeJS.ProcessEnv = process.env,
@@ -65,10 +105,10 @@ export function isCursorCliPrintMode(
     const proc = read(pid);
     if (!proc) return false;
     if (proc.argv[0] && basename(proc.argv[0]) === invokedAs) {
-      const end = proc.argv.indexOf("--");
-      return proc.argv
-        .slice(1, end < 0 ? undefined : end)
-        .some((arg) => arg === "-p" || arg === "--print");
+      const script = proc.argv.slice(1).findIndex((arg) => !arg.startsWith("--")) + 1;
+      return hasPrintFlag(
+        proc.argv.slice(/[\\/]index\.js$/.test(proc.argv[script] ?? "") ? script + 1 : 1),
+      );
     }
     pid = proc.ppid;
   }

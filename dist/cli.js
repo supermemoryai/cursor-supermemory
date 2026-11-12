@@ -505,9 +505,9 @@ function findProjectConfig(cwd) {
 }
 function flag(envName, value, fallback) {
   const env = process.env[envName]?.trim().toLowerCase();
-  if (env === "true" || env === "1")
+  if (env && ["true", "1", "yes", "on"].includes(env))
     return true;
-  if (env === "false" || env === "0")
+  if (env && ["false", "0", "no", "off"].includes(env))
     return false;
   return typeof value === "boolean" ? value : fallback;
 }
