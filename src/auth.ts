@@ -5,6 +5,7 @@ import childProcess from "node:child_process";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { version as PLUGIN_VERSION } from "../package.json";
+import { clearRecallCache } from "./repeat-guard.ts";
 
 const CREDENTIALS_DIR = path.join(os.homedir(), ".supermemory-cursor");
 export const CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "credentials.json");
@@ -381,6 +382,7 @@ function refreshCredentials(config: OAuthConfig): Promise<string> {
       if (error instanceof AuthError && ["invalid_grant", "invalid_client"].includes(error.code)) {
         const { accessToken: _access, refreshToken: _refresh, ...registration } = credentials;
         writeJson(CREDENTIALS_FILE, registration);
+        clearRecallCache();
         if (error.code === "invalid_client") fs.rmSync(CLIENT_FILE, { force: true });
         throw authRequired();
       }
@@ -427,6 +429,7 @@ export async function settleAuth(): Promise<void> {
 
 export async function clearCredentials(): Promise<boolean> {
   return withAuthLock(async (remaining) => {
+    clearRecallCache();
     const credentials = readJson<Credentials>(CREDENTIALS_FILE);
     if (credentials?.type === "oauth" && credentials.refreshToken) {
       await oauthRequest(issuerEndpoint(credentials.revocationEndpoint, credentials.issuer), {

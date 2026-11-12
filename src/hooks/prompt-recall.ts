@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { loadConfig, getAuthToken, isConfigured } from "../config.ts";
-import { getSearches } from "../hook-api.ts";
+import { loadConfig, getApiBaseUrl, getAuthToken, isConfigured } from "../config.ts";
+import { getSearches, resolveApiVersion } from "../hook-api.ts";
 import { readHookState, writeHookState, type HookState } from "../hook-state.ts";
 import { getResolvedTags } from "../tags.ts";
 import { sessionSkipReason } from "../session-filter.ts";
@@ -114,14 +114,18 @@ async function recall(
   if (sessionSkipReason(input, config, state)) return;
   const tags = getResolvedTags(root, config);
   const query = input.prompt!.slice(0, MAX_QUERY_LENGTH);
-  const cached = config.dedupeRecallQueries
-    ? cachedRecall(tags.canonical, query)
-    : null;
+  const token = await getAuthToken(config);
+  const scope = {
+    backend: `${resolveApiVersion(config.baseUrl, config.apiVersion)} ${getApiBaseUrl(config)}`,
+    credential: token,
+    containerTags: tags.allReads,
+  };
+  const cached = config.dedupeRecallQueries ? cachedRecall(scope, query) : null;
   const profiles =
     cached ??
     (await getSearches(
       config.baseUrl,
-      () => getAuthToken(config),
+      token,
       tags.allReads,
       query,
       config.apiVersion,
@@ -131,7 +135,7 @@ async function recall(
     config.dedupeRecallQueries &&
     profiles.length === new Set(tags.allReads.filter(Boolean)).size
   ) {
-    cacheRecall(tags.canonical, query, profiles);
+    cacheRecall(scope, query, profiles);
   }
   const { fresh, hashes } = selectRecallResults(
     profiles,

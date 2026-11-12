@@ -8,6 +8,29 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+// src/repeat-guard.ts
+import {
+  chmodSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+var RECALL_WINDOW_MS = 10 * 60000;
+var OPENING_WINDOW_MS = 24 * 60 * 60000;
+function guardDir(name) {
+  return join(homedir(), ".supermemory-cursor", name);
+}
+function clearRecallCache() {
+  rmSync(guardDir("recall-queries"), { recursive: true, force: true });
+}
+
+// src/auth.ts
 var CREDENTIALS_DIR = path.join(os.homedir(), ".supermemory-cursor");
 var CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "credentials.json");
 var CLIENT_FILE = path.join(CREDENTIALS_DIR, "oauth-client.json");
@@ -224,6 +247,7 @@ function refreshCredentials(config) {
       if (error instanceof AuthError && ["invalid_grant", "invalid_client"].includes(error.code)) {
         const { accessToken: _access, refreshToken: _refresh, ...registration } = credentials;
         writeJson(CREDENTIALS_FILE, registration);
+        clearRecallCache();
         if (error.code === "invalid_client")
           fs.rmSync(CLIENT_FILE, { force: true });
         throw authRequired();
@@ -393,14 +417,14 @@ import { execSync } from "node:child_process";
 import { createHash as createHash2 } from "node:crypto";
 import {
   existsSync,
-  readFileSync,
+  readFileSync as readFileSync2,
   realpathSync
 } from "node:fs";
-import { hostname, homedir, userInfo } from "node:os";
+import { hostname, homedir as homedir2, userInfo } from "node:os";
 import {
   basename,
   dirname,
-  join,
+  join as join2,
   resolve,
   sep
 } from "node:path";
@@ -507,7 +531,7 @@ function readJson3(filePath) {
   try {
     if (!existsSync(filePath))
       return null;
-    return JSON.parse(readFileSync(filePath, "utf-8"));
+    return JSON.parse(readFileSync2(filePath, "utf-8"));
   } catch {
     return null;
   }
@@ -574,13 +598,13 @@ function stripJsoncComments(content) {
   return result.replace(/,\s*([}\]])/g, "$1");
 }
 function loadOpenCodeConfig() {
-  const configDir = join(homedir(), ".config", "opencode");
+  const configDir = join2(homedir2(), ".config", "opencode");
   for (const filename of ["supermemory.jsonc", "supermemory.json"]) {
     try {
-      const configPath = join(configDir, filename);
+      const configPath = join2(configDir, filename);
       if (!existsSync(configPath))
         continue;
-      return JSON.parse(stripJsoncComments(readFileSync(configPath, "utf-8")));
+      return JSON.parse(stripJsoncComments(readFileSync2(configPath, "utf-8")));
     } catch {
       return null;
     }
@@ -636,7 +660,7 @@ function getLegacyCursorProjectTags(directory, config) {
 function getLegacyClaudeTags(directory) {
   const basePath = getProjectBasePath(directory);
   const projectHash = sha256(basePath);
-  const config = readJson3(join(basePath, ".claude", ".supermemory-claude", "config.json"));
+  const config = readJson3(join2(basePath, ".claude", ".supermemory-claude", "config.json"));
   return {
     personal: uniqueTags([
       stringValue(config?.personalContainerTag),
@@ -651,7 +675,7 @@ function getLegacyClaudeTags(directory) {
   };
 }
 function getLegacyCodexTags(directory) {
-  const config = readJson3(join(homedir(), ".codex", "supermemory.json"));
+  const config = readJson3(join2(homedir2(), ".codex", "supermemory.json"));
   const prefix = stringValue(config?.containerTagPrefix) || "codex";
   const userIdentity = getGitEmail(directory) || process.env.USER || process.env.USERNAME || hostname();
   const userHash = sha256(userIdentity);
@@ -1617,7 +1641,7 @@ class HttpResponsePromise extends Promise {
   }
 }
 // node_modules/supermemory/dist/esm/generated/core/url/join.js
-function join2(base, ...segments) {
+function join3(base, ...segments) {
   if (!base) {
     return "";
   }
@@ -1722,7 +1746,7 @@ async function makePassthroughRequest(input, init, clientOptions, requestOptions
   if (url.startsWith("http://") || url.startsWith("https://")) {
     fullUrl = url;
   } else if (baseUrl != null) {
-    fullUrl = join2(baseUrl, url);
+    fullUrl = join3(baseUrl, url);
   } else {
     fullUrl = url;
   }
@@ -2520,7 +2544,7 @@ class ConnectorsClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, "connectors"),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, "connectors"),
       method: "GET",
       headers: _headers,
       queryString: queryBuilder().addMany(_queryParams).mergeAdditional(requestOptions?.queryParams).build(),
@@ -2569,7 +2593,7 @@ class ConnectorsClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/connectors`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/connectors`),
       method: "GET",
       headers: _headers,
       queryString: queryBuilder().addMany(_queryParams).mergeAdditional(requestOptions?.queryParams).build(),
@@ -2610,7 +2634,7 @@ class ConnectorsClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/connectors`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/connectors`),
       method: "POST",
       headers: _headers,
       contentType: "application/json",
@@ -2662,7 +2686,7 @@ class ConnectorsClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/connectors/${encodePathParam(id)}`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/connectors/${encodePathParam(id)}`),
       method: "GET",
       headers: _headers,
       queryString: queryBuilder().addMany(_queryParams).mergeAdditional(requestOptions?.queryParams).build(),
@@ -2708,7 +2732,7 @@ class ConnectorsClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/connectors/${encodePathParam(id)}`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/connectors/${encodePathParam(id)}`),
       method: "DELETE",
       headers: _headers,
       queryString: queryBuilder().addMany(_queryParams).mergeAdditional(requestOptions?.queryParams).build(),
@@ -2750,7 +2774,7 @@ class ConnectorsClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/connectors/${encodePathParam(id)}`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/connectors/${encodePathParam(id)}`),
       method: "PATCH",
       headers: _headers,
       contentType: "application/json",
@@ -2795,7 +2819,7 @@ class ConnectorsClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/connectors/${encodePathParam(id)}/sync`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/connectors/${encodePathParam(id)}/sync`),
       method: "POST",
       headers: _headers,
       queryString: queryBuilder().mergeAdditional(requestOptions?.queryParams).build(),
@@ -2851,7 +2875,7 @@ class DocumentsClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/document`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/document`),
       method: "DELETE",
       headers: _headers,
       contentType: "application/json",
@@ -2894,7 +2918,7 @@ class DocumentsClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/document/batch`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/document/batch`),
       method: "POST",
       headers: _headers,
       contentType: "application/json",
@@ -2946,7 +2970,7 @@ class DocumentsClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/document/${encodePathParam(id)}`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/document/${encodePathParam(id)}`),
       method: "GET",
       headers: _headers,
       queryString: queryBuilder().addMany(_queryParams).mergeAdditional(requestOptions?.queryParams).build(),
@@ -2988,7 +3012,7 @@ class DocumentsClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/document/${encodePathParam(id)}`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/document/${encodePathParam(id)}`),
       method: "PATCH",
       headers: _headers,
       contentType: "application/json",
@@ -3064,7 +3088,7 @@ class DocumentsClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, mergeOnlyDefinedHeaders({ ..._maybeEncodedRequest.headers }), requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/document/file`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/document/file`),
       method: "POST",
       headers: _headers,
       queryString: queryBuilder().mergeAdditional(requestOptions?.queryParams).build(),
@@ -3141,7 +3165,7 @@ class DocumentsClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, mergeOnlyDefinedHeaders({ ..._maybeEncodedRequest.headers }), requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/document/file/${encodePathParam(id)}`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/document/file/${encodePathParam(id)}`),
       method: "POST",
       headers: _headers,
       queryString: queryBuilder().mergeAdditional(requestOptions?.queryParams).build(),
@@ -3222,7 +3246,7 @@ class DocumentsClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, mergeOnlyDefinedHeaders({ ..._maybeEncodedRequest.headers }), requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/document/file/${encodePathParam(id)}`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/document/file/${encodePathParam(id)}`),
       method: "PATCH",
       headers: _headers,
       queryString: queryBuilder().mergeAdditional(requestOptions?.queryParams).build(),
@@ -3282,7 +3306,7 @@ class MemoriesClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/memories`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/memories`),
       method: "DELETE",
       headers: _headers,
       contentType: "application/json",
@@ -3325,7 +3349,7 @@ class MemoriesClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/memories/semantic`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/memories/semantic`),
       method: "DELETE",
       headers: _headers,
       contentType: "application/json",
@@ -3376,7 +3400,7 @@ class MemoriesClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/memories/${encodePathParam(id)}`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/memories/${encodePathParam(id)}`),
       method: "GET",
       headers: _headers,
       queryString: queryBuilder().addMany(_queryParams).mergeAdditional(requestOptions?.queryParams).build(),
@@ -3431,7 +3455,7 @@ class NamespacesClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, "ns"),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, "ns"),
       method: "GET",
       headers: _headers,
       queryString: queryBuilder().addMany(_queryParams).mergeAdditional(requestOptions?.queryParams).build(),
@@ -3471,7 +3495,7 @@ class NamespacesClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}`),
       method: "GET",
       headers: _headers,
       queryString: queryBuilder().mergeAdditional(requestOptions?.queryParams).build(),
@@ -3517,7 +3541,7 @@ class NamespacesClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}`),
       method: "DELETE",
       headers: _headers,
       queryString: queryBuilder().addMany(_queryParams).mergeAdditional(requestOptions?.queryParams).build(),
@@ -3561,7 +3585,7 @@ class NamespacesClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}`),
       method: "PATCH",
       headers: _headers,
       contentType: "application/json",
@@ -3614,7 +3638,7 @@ class OrganizationClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, "organization"),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, "organization"),
       method: "GET",
       headers: _headers,
       queryString: queryBuilder().mergeAdditional(requestOptions?.queryParams).build(),
@@ -3652,7 +3676,7 @@ class OrganizationClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, "organization"),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, "organization"),
       method: "PATCH",
       headers: _headers,
       contentType: "application/json",
@@ -3706,7 +3730,7 @@ class ProfilesClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/profile/buckets`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/profile/buckets`),
       method: "GET",
       headers: _headers,
       queryString: queryBuilder().mergeAdditional(requestOptions?.queryParams).build(),
@@ -3747,7 +3771,7 @@ class ProfilesClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/profile/buckets`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/profile/buckets`),
       method: "PUT",
       headers: _headers,
       contentType: "application/json",
@@ -3797,7 +3821,7 @@ class ProfilesClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/profile/buckets`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/profile/buckets`),
       method: "DELETE",
       headers: _headers,
       contentType: "application/json",
@@ -3879,7 +3903,7 @@ class SupermemoryClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/document`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/document`),
       method: "POST",
       headers: _headers,
       contentType: "application/json",
@@ -3926,7 +3950,7 @@ class SupermemoryClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/search`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/search`),
       method: "POST",
       headers: _headers,
       contentType: "application/json",
@@ -3971,7 +3995,7 @@ class SupermemoryClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/profile`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/profile`),
       method: "POST",
       headers: _headers,
       contentType: "application/json",
@@ -4021,7 +4045,7 @@ class SupermemoryClient {
     const _authRequest = await this._options.authProvider.getAuthRequest();
     const _headers = mergeHeaders(_authRequest.headers, this._options?.headers, requestOptions?.headers);
     const _response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/list/${encodePathParam(type)}`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/list/${encodePathParam(type)}`),
       method: "POST",
       headers: _headers,
       contentType: "application/json",
@@ -4083,7 +4107,7 @@ class Supermemory extends SupermemoryClient {
   async profileMarkdown(namespace, request = {}, requestOptions) {
     const auth = await this._options.authProvider.getAuthRequest();
     const response = await fetcher({
-      url: join2(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/profile`),
+      url: join3(await Supplier.get(this._options.baseUrl) ?? await Supplier.get(this._options.environment) ?? SupermemoryEnvironment.Default, `ns/${encodePathParam(namespace)}/profile`),
       method: "POST",
       headers: mergeHeaders(auth.headers, this._options.headers, requestOptions?.headers, { Accept: "text/markdown" }),
       contentType: "application/json",
@@ -4288,40 +4312,40 @@ function pluginRootFromEnv(env = process.env) {
 // src/hook-state.ts
 import { createHash as createHash4 } from "node:crypto";
 import {
-  mkdirSync,
-  readFileSync as readFileSync2,
-  renameSync,
-  rmSync,
-  writeFileSync
+  mkdirSync as mkdirSync2,
+  readFileSync as readFileSync3,
+  renameSync as renameSync2,
+  rmSync as rmSync2,
+  writeFileSync as writeFileSync2
 } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { join as join3 } from "node:path";
+import { homedir as homedir3 } from "node:os";
+import { join as join4 } from "node:path";
 function statePath(conversationId) {
   const id = createHash4("sha256").update(conversationId || "unknown").digest("hex").slice(0, 32);
-  return join3(homedir2(), ".supermemory-cursor", "hook-state", `${id}.json`);
+  return join4(homedir3(), ".supermemory-cursor", "hook-state", `${id}.json`);
 }
 function readHookState(conversationId) {
   try {
-    return JSON.parse(readFileSync2(statePath(conversationId), "utf8"));
+    return JSON.parse(readFileSync3(statePath(conversationId), "utf8"));
   } catch {
     return {};
   }
 }
 function writeHookState(conversationId, updates) {
   const filePath = statePath(conversationId);
-  mkdirSync(join3(homedir2(), ".supermemory-cursor", "hook-state"), {
+  mkdirSync2(join4(homedir3(), ".supermemory-cursor", "hook-state"), {
     recursive: true,
     mode: 448
   });
   const tempPath = `${filePath}.${process.pid}.tmp`;
-  writeFileSync(tempPath, `${JSON.stringify({ ...readHookState(conversationId), ...updates })}
+  writeFileSync2(tempPath, `${JSON.stringify({ ...readHookState(conversationId), ...updates })}
 `, { mode: 384 });
-  renameSync(tempPath, filePath);
+  renameSync2(tempPath, filePath);
 }
 
 // src/session-filter.ts
 import { execFileSync } from "node:child_process";
-import { readFileSync as readFileSync3 } from "node:fs";
+import { readFileSync as readFileSync4 } from "node:fs";
 import { basename as basename2 } from "node:path";
 var VALUE_OPTIONS = new Set([
   "--api-key",
@@ -4352,8 +4376,8 @@ function isOrchestratedSession(env = process.env) {
 }
 function readProcess(pid) {
   try {
-    const argv = readFileSync3(`/proc/${pid}/cmdline`, "utf8").split("\x00").filter(Boolean);
-    const stat = readFileSync3(`/proc/${pid}/stat`, "utf8");
+    const argv = readFileSync4(`/proc/${pid}/cmdline`, "utf8").split("\x00").filter(Boolean);
+    const stat = readFileSync4(`/proc/${pid}/stat`, "utf8");
     return { ppid: Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]), argv };
   } catch {}
   try {

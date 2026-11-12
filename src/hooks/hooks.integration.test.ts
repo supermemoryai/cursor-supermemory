@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -227,12 +227,30 @@ test("skips every API call for subagent and background sessions unless opted in"
     expect(searches()).toBe(once);
     const served = JSON.parse(await runHook("dist/inject-recall.js", { conversation_id: "worker-2" }));
     expect(served.additional_context).toContain("- ◪ The auth flow uses rotating tokens");
+    const otherKey = { SUPERMEMORY_API_KEY: "sm_other_account_key_9876" };
+    await runHook("dist/prompt-recall.js", { conversation_id: "worker-4", prompt, workspace_roots: [workspace] }, otherKey);
+    expect(searches()).toBe(once * 2);
+    await runHook("dist/prompt-recall.js", { conversation_id: "worker-5", prompt, workspace_roots: [workspace] }, otherKey);
+    expect(searches()).toBe(once * 2);
+    const cacheDir = join(home, ".supermemory-cursor", "recall-queries");
+    expect(statSync(cacheDir).mode & 0o777).toBe(0o700);
+    for (const name of readdirSync(cacheDir)) {
+      expect(statSync(join(cacheDir, name)).mode & 0o777).toBe(0o600);
+      expect(readFileSync(join(cacheDir, name), "utf8")).not.toContain("sm_");
+    }
     await runHook(
       "dist/prompt-recall.js",
       { conversation_id: "worker-3", prompt, workspace_roots: [workspace] },
       { SUPERMEMORY_DEDUPE_RECALL_QUERIES: "false" },
     );
-    expect(searches()).toBe(once * 2);
+    expect(searches()).toBe(once * 3);
+    const logout = Bun.spawn(["node", join(root, "dist/cli.js"), "logout"], {
+      env: { ...Bun.env, HOME: home, USERPROFILE: home },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    expect(await logout.exited).toBe(0);
+    expect(existsSync(cacheDir)).toBe(false);
   });
 
   test("replaces a long opening prompt captured from this machine in the last day with a marker", async () => {

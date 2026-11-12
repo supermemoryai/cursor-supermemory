@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -16,6 +17,12 @@ const RECALL_WINDOW_MS = 10 * 60_000;
 const OPENING_WINDOW_MS = 24 * 60 * 60_000;
 const MIN_OPENING_PROMPT_LENGTH = 200;
 
+export interface RecallScope {
+  backend: string;
+  credential: string;
+  containerTags: string[];
+}
+
 function guardDir(name: string): string {
   return join(homedir(), ".supermemory-cursor", name);
 }
@@ -27,6 +34,19 @@ function normalize(text: string): string {
 function textKey(containerTag: string, text: string): string {
   return createHash("sha256")
     .update(`${containerTag}\n${normalize(text)}`)
+    .digest("hex");
+}
+
+function recallKey(scope: RecallScope, query: string): string {
+  return createHash("sha256")
+    .update(
+      [
+        scope.backend,
+        createHash("sha256").update(scope.credential).digest("hex"),
+        [...new Set(scope.containerTags)].join(","),
+        normalize(query),
+      ].join("\n"),
+    )
     .digest("hex");
 }
 
@@ -61,15 +81,18 @@ function readFresh(file: string, maxAgeMs: number): string | null {
 function record(dir: string, key: string, content: string, maxAgeMs: number): void {
   try {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
+    chmodSync(dir, 0o700);
     const tempPath = join(dir, `.${key}.${process.pid}.tmp`);
     writeFileSync(tempPath, content, { mode: 0o600 });
+    chmodSync(tempPath, 0o600);
     renameSync(tempPath, join(dir, key));
     prune(dir, maxAgeMs);
   } catch {}
 }
 
-export function cachedRecall(containerTag: string, query: string): any[] | null {
-  const cached = readFresh(join(guardDir("recall-queries"), textKey(containerTag, query)), RECALL_WINDOW_MS);
+export function cachedRecall(scope: RecallScope, query: string): any[] | null {
+  if (!scope.credential) return null;
+  const cached = readFresh(join(guardDir("recall-queries"), recallKey(scope, query)), RECALL_WINDOW_MS);
   try {
     const profiles = cached === null ? null : JSON.parse(cached);
     return Array.isArray(profiles) ? profiles : null;
@@ -78,8 +101,13 @@ export function cachedRecall(containerTag: string, query: string): any[] | null 
   }
 }
 
-export function cacheRecall(containerTag: string, query: string, profiles: any[]): void {
-  record(guardDir("recall-queries"), textKey(containerTag, query), JSON.stringify(profiles), RECALL_WINDOW_MS);
+export function cacheRecall(scope: RecallScope, query: string, profiles: any[]): void {
+  if (!scope.credential) return;
+  record(guardDir("recall-queries"), recallKey(scope, query), JSON.stringify(profiles), RECALL_WINDOW_MS);
+}
+
+export function clearRecallCache(): void {
+  rmSync(guardDir("recall-queries"), { recursive: true, force: true });
 }
 
 export function wasOpeningPromptCaptured(containerTag: string, prompt: string): boolean {
