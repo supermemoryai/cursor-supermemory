@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import {
   mkdirSync,
   readdirSync,
+  readFileSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -11,18 +13,24 @@ import { join } from "node:path";
 
 const MAX_ENTRIES = 500;
 const RECALL_WINDOW_MS = 10 * 60_000;
+const OPENING_WINDOW_MS = 24 * 60 * 60_000;
+const MIN_OPENING_PROMPT_LENGTH = 200;
 
 function guardDir(name: string): string {
   return join(homedir(), ".supermemory-cursor", name);
 }
 
+function normalize(text: string): string {
+  return text.trim().replace(/\s+/g, " ");
+}
+
 function textKey(containerTag: string, text: string): string {
   return createHash("sha256")
-    .update(`${containerTag}\n${text.trim().replace(/\s+/g, " ")}`)
+    .update(`${containerTag}\n${normalize(text)}`)
     .digest("hex");
 }
 
-function prune(dir: string, maxAgeMs?: number): void {
+function prune(dir: string, maxAgeMs: number): void {
   const now = Date.now();
   readdirSync(dir)
     .flatMap((name) => {
@@ -34,46 +42,56 @@ function prune(dir: string, maxAgeMs?: number): void {
     })
     .sort((a, b) => b.mtime - a.mtime)
     .forEach((entry, index) => {
-      if (index >= MAX_ENTRIES || (maxAgeMs !== undefined && now - entry.mtime > maxAgeMs)) {
+      if (index >= MAX_ENTRIES || now - entry.mtime > maxAgeMs) {
         rmSync(join(dir, entry.name), { force: true });
       }
     });
 }
 
-// O_EXCL file creation makes one process win when parallel workers race on the same key; failures fail open.
-function claim(dir: string, key: string, maxAgeMs?: number): boolean {
-  const file = join(dir, key);
+function readFresh(file: string, maxAgeMs: number): string | null {
+  try {
+    if (Date.now() - statSync(file).mtimeMs > maxAgeMs) return null;
+    return readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+// Atomic write-then-rename; failures are swallowed so a guard never breaks a hook.
+function record(dir: string, key: string, content: string, maxAgeMs: number): void {
   try {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    writeFileSync(file, "", { flag: "wx", mode: 0o600 });
+    const tempPath = join(dir, `.${key}.${process.pid}.tmp`);
+    writeFileSync(tempPath, content, { mode: 0o600 });
+    renameSync(tempPath, join(dir, key));
     prune(dir, maxAgeMs);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") return true;
-  }
-  try {
-    if (maxAgeMs === undefined || Date.now() - statSync(file).mtimeMs < maxAgeMs) {
-      return false;
-    }
-    writeFileSync(file, "", { mode: 0o600 });
   } catch {}
-  return true;
 }
 
-export function claimRecallQuery(containerTag: string, query: string): boolean {
-  return claim(guardDir("recall-queries"), textKey(containerTag, query), RECALL_WINDOW_MS);
+export function cachedRecall(containerTag: string, query: string): any[] | null {
+  const cached = readFresh(join(guardDir("recall-queries"), textKey(containerTag, query)), RECALL_WINDOW_MS);
+  try {
+    const profiles = cached === null ? null : JSON.parse(cached);
+    return Array.isArray(profiles) ? profiles : null;
+  } catch {
+    return null;
+  }
 }
 
-export function releaseRecallQuery(containerTag: string, query: string): void {
-  rmSync(join(guardDir("recall-queries"), textKey(containerTag, query)), { force: true });
+export function cacheRecall(containerTag: string, query: string, profiles: any[]): void {
+  record(guardDir("recall-queries"), textKey(containerTag, query), JSON.stringify(profiles), RECALL_WINDOW_MS);
 }
 
-export function claimOpeningPrompt(containerTag: string, prompt: string): boolean {
-  return claim(guardDir("opening-prompts"), textKey(containerTag, prompt));
+export function wasOpeningPromptCaptured(containerTag: string, prompt: string): boolean {
+  return (
+    normalize(prompt).length >= MIN_OPENING_PROMPT_LENGTH &&
+    readFresh(join(guardDir("opening-prompts"), textKey(containerTag, prompt)), OPENING_WINDOW_MS) !== null
+  );
 }
 
-export function releaseOpeningPrompt(containerTag: string, prompt: string): void {
-  rmSync(join(guardDir("opening-prompts"), textKey(containerTag, prompt)), { force: true });
+export function recordOpeningPrompt(containerTag: string, prompt: string): void {
+  if (normalize(prompt).length < MIN_OPENING_PROMPT_LENGTH) return;
+  record(guardDir("opening-prompts"), textKey(containerTag, prompt), "", OPENING_WINDOW_MS);
 }
 
 export function openingPromptMarker(containerTag: string, prompt: string): string {

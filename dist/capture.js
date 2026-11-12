@@ -4369,6 +4369,8 @@ import { createHash as createHash5 } from "node:crypto";
 import {
   mkdirSync as mkdirSync2,
   readdirSync,
+  readFileSync as readFileSync4,
+  renameSync as renameSync2,
   rmSync as rmSync2,
   statSync,
   writeFileSync as writeFileSync2
@@ -4377,12 +4379,17 @@ import { homedir as homedir3 } from "node:os";
 import { join as join4 } from "node:path";
 var MAX_ENTRIES = 500;
 var RECALL_WINDOW_MS = 10 * 60000;
+var OPENING_WINDOW_MS = 24 * 60 * 60000;
+var MIN_OPENING_PROMPT_LENGTH = 200;
 function guardDir(name) {
   return join4(homedir3(), ".supermemory-cursor", name);
 }
+function normalize(text) {
+  return text.trim().replace(/\s+/g, " ");
+}
 function textKey(containerTag, text) {
   return createHash5("sha256").update(`${containerTag}
-${text.trim().replace(/\s+/g, " ")}`).digest("hex");
+${normalize(text)}`).digest("hex");
 }
 function prune(dir, maxAgeMs) {
   const now = Date.now();
@@ -4393,35 +4400,36 @@ function prune(dir, maxAgeMs) {
       return [];
     }
   }).sort((a, b) => b.mtime - a.mtime).forEach((entry, index) => {
-    if (index >= MAX_ENTRIES || maxAgeMs !== undefined && now - entry.mtime > maxAgeMs) {
+    if (index >= MAX_ENTRIES || now - entry.mtime > maxAgeMs) {
       rmSync2(join4(dir, entry.name), { force: true });
     }
   });
 }
-function claim(dir, key, maxAgeMs) {
-  const file = join4(dir, key);
+function readFresh(file, maxAgeMs) {
+  try {
+    if (Date.now() - statSync(file).mtimeMs > maxAgeMs)
+      return null;
+    return readFileSync4(file, "utf8");
+  } catch {
+    return null;
+  }
+}
+function record(dir, key, content, maxAgeMs) {
   try {
     mkdirSync2(dir, { recursive: true, mode: 448 });
-    writeFileSync2(file, "", { flag: "wx", mode: 384 });
+    const tempPath = join4(dir, `.${key}.${process.pid}.tmp`);
+    writeFileSync2(tempPath, content, { mode: 384 });
+    renameSync2(tempPath, join4(dir, key));
     prune(dir, maxAgeMs);
-    return true;
-  } catch (error) {
-    if (error.code !== "EEXIST")
-      return true;
-  }
-  try {
-    if (maxAgeMs === undefined || Date.now() - statSync(file).mtimeMs < maxAgeMs) {
-      return false;
-    }
-    writeFileSync2(file, "", { mode: 384 });
   } catch {}
-  return true;
 }
-function claimOpeningPrompt(containerTag, prompt) {
-  return claim(guardDir("opening-prompts"), textKey(containerTag, prompt));
+function wasOpeningPromptCaptured(containerTag, prompt) {
+  return normalize(prompt).length >= MIN_OPENING_PROMPT_LENGTH && readFresh(join4(guardDir("opening-prompts"), textKey(containerTag, prompt)), OPENING_WINDOW_MS) !== null;
 }
-function releaseOpeningPrompt(containerTag, prompt) {
-  rmSync2(join4(guardDir("opening-prompts"), textKey(containerTag, prompt)), { force: true });
+function recordOpeningPrompt(containerTag, prompt) {
+  if (normalize(prompt).length < MIN_OPENING_PROMPT_LENGTH)
+    return;
+  record(guardDir("opening-prompts"), textKey(containerTag, prompt), "", OPENING_WINDOW_MS);
 }
 function openingPromptMarker(containerTag, prompt) {
   return `[opening prompt already captured from this machine, sha256:${textKey(containerTag, prompt).slice(0, 16)}]`;
@@ -4580,19 +4588,13 @@ async function capture(input) {
     const selected = selectCaptureEntries(entries, start, config.signalExtraction, config.signalKeywords, config.signalTurnsBefore);
     const tags = getResolvedTags(root, config);
     const opening = config.dedupeOpeningPrompt && start === 0 && entries[0]?.role === "user" && selected[0] === entries[0] ? entries[0].text : undefined;
-    const ownsOpening = opening !== undefined && claimOpeningPrompt(tags.canonical, opening);
-    const releaseOpening = () => {
-      if (ownsOpening)
-        releaseOpeningPrompt(tags.canonical, opening);
-    };
-    const content = formatCapture(opening !== undefined && !ownsOpening ? [
+    const repeated = opening !== undefined && wasOpeningPromptCaptured(tags.canonical, opening);
+    const content = formatCapture(repeated ? [
       { role: "user", text: openingPromptMarker(tags.canonical, opening) },
       ...selected.slice(1)
     ] : selected);
-    if (content.length < 100) {
-      releaseOpening();
+    if (content.length < 100)
       return;
-    }
     const generation = input.generation_id || createHash6("sha256").update(content).digest("hex").slice(0, 32);
     await addMemory(config.baseUrl, auth, content, tags.canonical, {
       type: "conversation",
@@ -4605,10 +4607,10 @@ async function capture(input) {
     }, {
       customId: `cursor:capture:${createHash6("sha256").update(`${id}:${generation}`).digest("hex")}`,
       entityContext: AGENT_ENTITY_CONTEXT
-    }, config.apiVersion).catch((error) => {
-      releaseOpening();
-      throw error;
-    });
+    }, config.apiVersion);
+    if (opening !== undefined && !repeated) {
+      recordOpeningPrompt(tags.canonical, opening);
+    }
     writeHookState(id, {
       capturedEntries: entries.length,
       transcriptPath

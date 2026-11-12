@@ -1,11 +1,10 @@
 import { createHash } from "node:crypto";
 import { loadConfig, getAuthToken, isConfigured } from "../config.ts";
 import { getSearches } from "../hook-api.ts";
-import { readHookState, writeHookState } from "../hook-state.ts";
+import { readHookState, writeHookState, type HookState } from "../hook-state.ts";
 import { getResolvedTags } from "../tags.ts";
 import { sessionSkipReason } from "../session-filter.ts";
-import { claimRecallQuery, releaseRecallQuery } from "../repeat-guard.ts";
-import type { Config } from "../config.ts";
+import { cacheRecall, cachedRecall } from "../repeat-guard.ts";
 import {
   conversationId,
   type CursorHookInput,
@@ -103,69 +102,72 @@ ${lines.join("\n")}
 </supermemory-recall>`;
 }
 
-// The one gate a recall query passes before it reaches the API; extra skip rules belong here.
-export function claimRecall(config: Config, containerTag: string, query: string): boolean {
-  return !config.dedupeRecallQueries || claimRecallQuery(containerTag, query);
-}
-
-export async function runPromptRecall(input: CursorHookInput): Promise<void> {
-  const prompt = input.prompt;
-  if (shouldSkipPrompt(prompt)) {
-    process.stdout.write(JSON.stringify({ continue: true }));
-    return;
-  }
-
-  try {
-    const root = workspaceRoot(input);
-    const config = loadConfig(root);
-    if (!isConfigured(config)) {
-      process.stdout.write(JSON.stringify({ continue: true }));
-      return;
-    }
-    const auth = () => getAuthToken(config);
-
-    const id = conversationId(input);
-    const state = readHookState(id);
-    if (sessionSkipReason(input, config, state)) {
-      process.stdout.write(JSON.stringify({ continue: true }));
-      return;
-    }
-    const tags = getResolvedTags(root, config);
-    const query = prompt!.slice(0, MAX_QUERY_LENGTH);
-    if (!claimRecall(config, tags.canonical, query)) {
-      process.stdout.write(JSON.stringify({ continue: true }));
-      return;
-    }
-    const profiles = await getSearches(
+// Returns the recall to queue for this prompt; undefined clears any queued recall.
+async function recall(
+  input: CursorHookInput,
+  id: string,
+): Promise<Partial<HookState> | undefined> {
+  const root = workspaceRoot(input);
+  const config = loadConfig(root);
+  if (!isConfigured(config)) return;
+  const state = readHookState(id);
+  if (sessionSkipReason(input, config, state)) return;
+  const tags = getResolvedTags(root, config);
+  const query = input.prompt!.slice(0, MAX_QUERY_LENGTH);
+  const cached = config.dedupeRecallQueries
+    ? cachedRecall(tags.canonical, query)
+    : null;
+  const profiles =
+    cached ??
+    (await getSearches(
       config.baseUrl,
-      auth,
+      () => getAuthToken(config),
       tags.allReads,
       query,
       config.apiVersion,
-    ).catch((error) => {
-      if (config.dedupeRecallQueries) releaseRecallQuery(tags.canonical, query);
-      throw error;
-    });
-    const { fresh, hashes } = selectRecallResults(
-      profiles,
-      state.seenHashes ?? [],
-      Math.max(MIN_SIMILARITY, config.similarityThreshold),
-    );
-    writeHookState(
-      id,
-      fresh.length > 0
-        ? {
-            pendingContext: formatRecall(fresh, tags.canonical),
-            pendingGeneration: input.generation_id,
-            seenHashes: hashes,
-          }
-        : { pendingContext: undefined, pendingGeneration: undefined },
-    );
+    ));
+  if (
+    !cached &&
+    config.dedupeRecallQueries &&
+    profiles.length === new Set(tags.allReads.filter(Boolean)).size
+  ) {
+    cacheRecall(tags.canonical, query, profiles);
+  }
+  const { fresh, hashes } = selectRecallResults(
+    profiles,
+    state.seenHashes ?? [],
+    Math.max(MIN_SIMILARITY, config.similarityThreshold),
+  );
+  if (fresh.length === 0) return;
+  return {
+    pendingContext: formatRecall(fresh, tags.canonical),
+    pendingGeneration: input.generation_id,
+    seenHashes: hashes,
+  };
+}
+
+export async function runPromptRecall(input: CursorHookInput): Promise<void> {
+  if (shouldSkipPrompt(input.prompt)) {
+    process.stdout.write(JSON.stringify({ continue: true }));
+    return;
+  }
+  const id = conversationId(input);
+  let update: Partial<HookState> = {
+    pendingContext: undefined,
+    pendingGeneration: undefined,
+  };
+  try {
+    update = (await recall(input, id)) ?? update;
   } catch (error) {
     if (process.env.SUPERMEMORY_DEBUG === "true") {
       console.error("[supermemory] recall failed:", error);
     }
   }
+  try {
+    if (update.pendingContext || readHookState(id).pendingContext) {
+      writeHookState(id, update);
+    }
+  } catch {}
   process.stdout.write(JSON.stringify({ continue: true }));
 }
 

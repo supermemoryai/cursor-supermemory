@@ -4373,6 +4373,8 @@ import { createHash as createHash5 } from "node:crypto";
 import {
   mkdirSync as mkdirSync2,
   readdirSync,
+  readFileSync as readFileSync4,
+  renameSync as renameSync2,
   rmSync as rmSync2,
   statSync,
   writeFileSync as writeFileSync2
@@ -4381,12 +4383,16 @@ import { homedir as homedir3 } from "node:os";
 import { join as join4 } from "node:path";
 var MAX_ENTRIES = 500;
 var RECALL_WINDOW_MS = 10 * 60000;
+var OPENING_WINDOW_MS = 24 * 60 * 60000;
 function guardDir(name) {
   return join4(homedir3(), ".supermemory-cursor", name);
 }
+function normalize(text) {
+  return text.trim().replace(/\s+/g, " ");
+}
 function textKey(containerTag, text) {
   return createHash5("sha256").update(`${containerTag}
-${text.trim().replace(/\s+/g, " ")}`).digest("hex");
+${normalize(text)}`).digest("hex");
 }
 function prune(dir, maxAgeMs) {
   const now = Date.now();
@@ -4397,35 +4403,40 @@ function prune(dir, maxAgeMs) {
       return [];
     }
   }).sort((a, b) => b.mtime - a.mtime).forEach((entry, index) => {
-    if (index >= MAX_ENTRIES || maxAgeMs !== undefined && now - entry.mtime > maxAgeMs) {
+    if (index >= MAX_ENTRIES || now - entry.mtime > maxAgeMs) {
       rmSync2(join4(dir, entry.name), { force: true });
     }
   });
 }
-function claim(dir, key, maxAgeMs) {
-  const file = join4(dir, key);
+function readFresh(file, maxAgeMs) {
+  try {
+    if (Date.now() - statSync(file).mtimeMs > maxAgeMs)
+      return null;
+    return readFileSync4(file, "utf8");
+  } catch {
+    return null;
+  }
+}
+function record(dir, key, content, maxAgeMs) {
   try {
     mkdirSync2(dir, { recursive: true, mode: 448 });
-    writeFileSync2(file, "", { flag: "wx", mode: 384 });
+    const tempPath = join4(dir, `.${key}.${process.pid}.tmp`);
+    writeFileSync2(tempPath, content, { mode: 384 });
+    renameSync2(tempPath, join4(dir, key));
     prune(dir, maxAgeMs);
-    return true;
-  } catch (error) {
-    if (error.code !== "EEXIST")
-      return true;
-  }
-  try {
-    if (maxAgeMs === undefined || Date.now() - statSync(file).mtimeMs < maxAgeMs) {
-      return false;
-    }
-    writeFileSync2(file, "", { mode: 384 });
   } catch {}
-  return true;
 }
-function claimRecallQuery(containerTag, query) {
-  return claim(guardDir("recall-queries"), textKey(containerTag, query), RECALL_WINDOW_MS);
+function cachedRecall(containerTag, query) {
+  const cached = readFresh(join4(guardDir("recall-queries"), textKey(containerTag, query)), RECALL_WINDOW_MS);
+  try {
+    const profiles = cached === null ? null : JSON.parse(cached);
+    return Array.isArray(profiles) ? profiles : null;
+  } catch {
+    return null;
+  }
 }
-function releaseRecallQuery(containerTag, query) {
-  rmSync2(join4(guardDir("recall-queries"), textKey(containerTag, query)), { force: true });
+function cacheRecall(containerTag, query, profiles) {
+  record(guardDir("recall-queries"), textKey(containerTag, query), JSON.stringify(profiles), RECALL_WINDOW_MS);
 }
 
 // src/hooks/types.ts
@@ -4539,58 +4550,58 @@ ${lines.join(`
 `)}
 </supermemory-recall>`;
 }
-function claimRecall(config, containerTag, query) {
-  return !config.dedupeRecallQueries || claimRecallQuery(containerTag, query);
+async function recall(input, id) {
+  const root = workspaceRoot(input);
+  const config = loadConfig(root);
+  if (!isConfigured(config))
+    return;
+  const state = readHookState(id);
+  if (sessionSkipReason(input, config, state))
+    return;
+  const tags = getResolvedTags(root, config);
+  const query = input.prompt.slice(0, MAX_QUERY_LENGTH);
+  const cached = config.dedupeRecallQueries ? cachedRecall(tags.canonical, query) : null;
+  const profiles = cached ?? await getSearches(config.baseUrl, () => getAuthToken(config), tags.allReads, query, config.apiVersion);
+  if (!cached && config.dedupeRecallQueries && profiles.length === new Set(tags.allReads.filter(Boolean)).size) {
+    cacheRecall(tags.canonical, query, profiles);
+  }
+  const { fresh, hashes } = selectRecallResults(profiles, state.seenHashes ?? [], Math.max(MIN_SIMILARITY, config.similarityThreshold));
+  if (fresh.length === 0)
+    return;
+  return {
+    pendingContext: formatRecall(fresh, tags.canonical),
+    pendingGeneration: input.generation_id,
+    seenHashes: hashes
+  };
 }
 async function runPromptRecall(input) {
-  const prompt = input.prompt;
-  if (shouldSkipPrompt(prompt)) {
+  if (shouldSkipPrompt(input.prompt)) {
     process.stdout.write(JSON.stringify({ continue: true }));
     return;
   }
+  const id = conversationId(input);
+  let update = {
+    pendingContext: undefined,
+    pendingGeneration: undefined
+  };
   try {
-    const root = workspaceRoot(input);
-    const config = loadConfig(root);
-    if (!isConfigured(config)) {
-      process.stdout.write(JSON.stringify({ continue: true }));
-      return;
-    }
-    const auth = () => getAuthToken(config);
-    const id = conversationId(input);
-    const state = readHookState(id);
-    if (sessionSkipReason(input, config, state)) {
-      process.stdout.write(JSON.stringify({ continue: true }));
-      return;
-    }
-    const tags = getResolvedTags(root, config);
-    const query = prompt.slice(0, MAX_QUERY_LENGTH);
-    if (!claimRecall(config, tags.canonical, query)) {
-      process.stdout.write(JSON.stringify({ continue: true }));
-      return;
-    }
-    const profiles = await getSearches(config.baseUrl, auth, tags.allReads, query, config.apiVersion).catch((error) => {
-      if (config.dedupeRecallQueries)
-        releaseRecallQuery(tags.canonical, query);
-      throw error;
-    });
-    const { fresh, hashes } = selectRecallResults(profiles, state.seenHashes ?? [], Math.max(MIN_SIMILARITY, config.similarityThreshold));
-    writeHookState(id, fresh.length > 0 ? {
-      pendingContext: formatRecall(fresh, tags.canonical),
-      pendingGeneration: input.generation_id,
-      seenHashes: hashes
-    } : { pendingContext: undefined, pendingGeneration: undefined });
+    update = await recall(input, id) ?? update;
   } catch (error) {
     if (process.env.SUPERMEMORY_DEBUG === "true") {
       console.error("[supermemory] recall failed:", error);
     }
   }
+  try {
+    if (update.pendingContext || readHookState(id).pendingContext) {
+      writeHookState(id, update);
+    }
+  } catch {}
   process.stdout.write(JSON.stringify({ continue: true }));
 }
 if (isMainModule(import.meta.url)) {
   await runHook(runPromptRecall);
 }
 export {
-  claimRecall,
   formatRecall,
   runPromptRecall,
   selectRecallResults,

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -217,7 +217,7 @@ test("skips every API call for subagent and background sessions unless opted in"
     expect(requests.length).toBe(skipped);
   });
 
-  test("recalls an identical query once per container within the window", async () => {
+  test("re-serves an identical query's recall per container within the window", async () => {
     const prompt = "summarise the swarm worker task for the billing service";
     const searches = () => requests.filter((request) => request.body?.q === prompt).length;
     await runHook("dist/prompt-recall.js", { conversation_id: "worker-1", prompt, workspace_roots: [workspace] });
@@ -225,6 +225,8 @@ test("skips every API call for subagent and background sessions unless opted in"
     expect(once).toBeGreaterThan(0);
     await runHook("dist/prompt-recall.js", { conversation_id: "worker-2", prompt, workspace_roots: [workspace] });
     expect(searches()).toBe(once);
+    const served = JSON.parse(await runHook("dist/inject-recall.js", { conversation_id: "worker-2" }));
+    expect(served.additional_context).toContain("- ◪ The auth flow uses rotating tokens");
     await runHook(
       "dist/prompt-recall.js",
       { conversation_id: "worker-3", prompt, workspace_roots: [workspace] },
@@ -233,14 +235,15 @@ test("skips every API call for subagent and background sessions unless opted in"
     expect(searches()).toBe(once * 2);
   });
 
-  test("replaces an opening prompt already captured from this machine with a marker", async () => {
-    const opening = "Run the nightly reconciliation task across every ledger shard and report mismatches.";
-    const capture = async (id: string, env: Record<string, string> = {}) => {
+  test("replaces a long opening prompt captured from this machine in the last day with a marker", async () => {
+    const opening =
+      "Run the nightly reconciliation task across every ledger shard, compare each balance against the upstream bank statement, flag any mismatch above one cent, and report the shard, account and delta for each mismatch you find.";
+    const capture = async (id: string, env: Record<string, string> = {}, text = opening) => {
       const transcriptPath = join(home, `${id}.jsonl`);
       writeFileSync(
         transcriptPath,
         [
-          { role: "user", content: opening },
+          { role: "user", content: text },
           { role: "assistant", content: `Shard report for ${id}: two mismatches found in the EU ledger and queued for review.` },
         ]
           .map((entry) => JSON.stringify(entry))
@@ -259,5 +262,12 @@ test("skips every API call for subagent and background sessions unless opted in"
     expect(second).toContain("opening prompt already captured from this machine");
     expect(second).toContain("Shard report for opening-2");
     expect(await capture("opening-3", { SUPERMEMORY_DEDUPE_OPENING_PROMPT: "false" })).toContain(opening);
+    const dir = join(home, ".supermemory-cursor", "opening-prompts");
+    const dayAgo = new Date(Date.now() - 25 * 60 * 60_000);
+    for (const name of readdirSync(dir)) utimesSync(join(dir, name), dayAgo, dayAgo);
+    expect(await capture("opening-4")).toContain(opening);
+    const short = "Run the nightly reconciliation task across every ledger shard and report mismatches.";
+    expect(await capture("opening-5", {}, short)).toContain(short);
+    expect(await capture("opening-6", {}, short)).toContain(short);
   });
 });
