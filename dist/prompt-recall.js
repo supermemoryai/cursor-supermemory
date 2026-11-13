@@ -34,12 +34,12 @@ function guardDir(name) {
 function normalize(text) {
   return text.trim().replace(/\s+/g, " ");
 }
-function recallKey(scope, query) {
+function scopedKey(scope, text) {
   return createHash("sha256").update([
     scope.backend,
     createHash("sha256").update(scope.credential).digest("hex"),
     [...new Set(scope.containerTags)].join(","),
-    normalize(query)
+    normalize(text)
   ].join(`
 `)).digest("hex");
 }
@@ -80,7 +80,7 @@ function record(dir, key, content, maxAgeMs) {
 function cachedRecall(scope, query) {
   if (!scope.credential)
     return null;
-  const cached = readFresh(join(guardDir("recall-queries"), recallKey(scope, query)), RECALL_WINDOW_MS);
+  const cached = readFresh(join(guardDir("recall-queries"), scopedKey(scope, query)), RECALL_WINDOW_MS);
   try {
     const profiles = cached === null ? null : JSON.parse(cached);
     return Array.isArray(profiles) ? profiles : null;
@@ -91,10 +91,12 @@ function cachedRecall(scope, query) {
 function cacheRecall(scope, query, profiles) {
   if (!scope.credential)
     return;
-  record(guardDir("recall-queries"), recallKey(scope, query), JSON.stringify(profiles), RECALL_WINDOW_MS);
+  record(guardDir("recall-queries"), scopedKey(scope, query), JSON.stringify(profiles), RECALL_WINDOW_MS);
 }
-function clearRecallCache() {
-  rmSync(guardDir("recall-queries"), { recursive: true, force: true });
+function clearAccountCaches() {
+  for (const name of ["recall-queries", "opening-prompts"]) {
+    rmSync(guardDir(name), { recursive: true, force: true });
+  }
 }
 
 // src/auth.ts
@@ -308,7 +310,7 @@ function refreshCredentials(config) {
       if (error instanceof AuthError && ["invalid_grant", "invalid_client"].includes(error.code)) {
         const { accessToken: _access, refreshToken: _refresh, ...registration } = credentials;
         writeJson(CREDENTIALS_FILE, registration);
-        clearRecallCache();
+        clearAccountCaches();
         if (error.code === "invalid_client")
           fs.rmSync(CLIENT_FILE, { force: true });
         throw authRequired();
@@ -3963,6 +3965,9 @@ async function searchMemories(baseUrl, auth, containerTag, query, scope, apiVers
     } : {}
   }, { abortSignal, maxRetries: 0 }));
 }
+function apiBackend(baseUrl, apiVersion) {
+  return `${resolveApiVersion(baseUrl, apiVersion)} ${baseUrl || DEFAULT_API_URL}`;
+}
 function getSearches(baseUrl, auth, tags, query, apiVersion) {
   return readNamespaces(tags, (tag) => searchMemories(baseUrl, auth, tag, query, undefined, apiVersion));
 }
@@ -4579,7 +4584,7 @@ async function recall(input, id) {
   const query = input.prompt.slice(0, MAX_QUERY_LENGTH);
   const token = await getAuthToken(config);
   const scope = {
-    backend: `${resolveApiVersion(config.baseUrl, config.apiVersion)} ${getApiBaseUrl(config)}`,
+    backend: apiBackend(config.baseUrl, config.apiVersion),
     credential: token,
     containerTags: tags.allReads
   };

@@ -17,7 +17,7 @@ const RECALL_WINDOW_MS = 10 * 60_000;
 const OPENING_WINDOW_MS = 24 * 60 * 60_000;
 const MIN_OPENING_PROMPT_LENGTH = 200;
 
-export interface RecallScope {
+export interface AccountScope {
   backend: string;
   credential: string;
   containerTags: string[];
@@ -31,20 +31,14 @@ function normalize(text: string): string {
   return text.trim().replace(/\s+/g, " ");
 }
 
-function textKey(containerTag: string, text: string): string {
-  return createHash("sha256")
-    .update(`${containerTag}\n${normalize(text)}`)
-    .digest("hex");
-}
-
-function recallKey(scope: RecallScope, query: string): string {
+function scopedKey(scope: AccountScope, text: string): string {
   return createHash("sha256")
     .update(
       [
         scope.backend,
         createHash("sha256").update(scope.credential).digest("hex"),
         [...new Set(scope.containerTags)].join(","),
-        normalize(query),
+        normalize(text),
       ].join("\n"),
     )
     .digest("hex");
@@ -90,9 +84,9 @@ function record(dir: string, key: string, content: string, maxAgeMs: number): vo
   } catch {}
 }
 
-export function cachedRecall(scope: RecallScope, query: string): any[] | null {
+export function cachedRecall(scope: AccountScope, query: string): any[] | null {
   if (!scope.credential) return null;
-  const cached = readFresh(join(guardDir("recall-queries"), recallKey(scope, query)), RECALL_WINDOW_MS);
+  const cached = readFresh(join(guardDir("recall-queries"), scopedKey(scope, query)), RECALL_WINDOW_MS);
   try {
     const profiles = cached === null ? null : JSON.parse(cached);
     return Array.isArray(profiles) ? profiles : null;
@@ -101,27 +95,30 @@ export function cachedRecall(scope: RecallScope, query: string): any[] | null {
   }
 }
 
-export function cacheRecall(scope: RecallScope, query: string, profiles: any[]): void {
+export function cacheRecall(scope: AccountScope, query: string, profiles: any[]): void {
   if (!scope.credential) return;
-  record(guardDir("recall-queries"), recallKey(scope, query), JSON.stringify(profiles), RECALL_WINDOW_MS);
+  record(guardDir("recall-queries"), scopedKey(scope, query), JSON.stringify(profiles), RECALL_WINDOW_MS);
 }
 
-export function clearRecallCache(): void {
-  rmSync(guardDir("recall-queries"), { recursive: true, force: true });
+export function clearAccountCaches(): void {
+  for (const name of ["recall-queries", "opening-prompts"]) {
+    rmSync(guardDir(name), { recursive: true, force: true });
+  }
 }
 
-export function wasOpeningPromptCaptured(containerTag: string, prompt: string): boolean {
+export function wasOpeningPromptCaptured(scope: AccountScope, prompt: string): boolean {
   return (
+    !!scope.credential &&
     normalize(prompt).length >= MIN_OPENING_PROMPT_LENGTH &&
-    readFresh(join(guardDir("opening-prompts"), textKey(containerTag, prompt)), OPENING_WINDOW_MS) !== null
+    readFresh(join(guardDir("opening-prompts"), scopedKey(scope, prompt)), OPENING_WINDOW_MS) !== null
   );
 }
 
-export function recordOpeningPrompt(containerTag: string, prompt: string): void {
-  if (normalize(prompt).length < MIN_OPENING_PROMPT_LENGTH) return;
-  record(guardDir("opening-prompts"), textKey(containerTag, prompt), "", OPENING_WINDOW_MS);
+export function recordOpeningPrompt(scope: AccountScope, prompt: string): void {
+  if (!scope.credential || normalize(prompt).length < MIN_OPENING_PROMPT_LENGTH) return;
+  record(guardDir("opening-prompts"), scopedKey(scope, prompt), "", OPENING_WINDOW_MS);
 }
 
-export function openingPromptMarker(containerTag: string, prompt: string): string {
-  return `[opening prompt already captured from this machine, sha256:${textKey(containerTag, prompt).slice(0, 16)}]`;
+export function openingPromptMarker(scope: AccountScope, prompt: string): string {
+  return `[opening prompt already captured from this machine, sha256:${scopedKey(scope, prompt).slice(0, 16)}]`;
 }
