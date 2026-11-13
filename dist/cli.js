@@ -17,7 +17,7 @@ import childProcess from "node:child_process";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 // package.json
-var version = "1.3.1";
+var version = "1.4.0";
 
 // src/repeat-guard.ts
 import {

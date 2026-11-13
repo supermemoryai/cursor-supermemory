@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.0
 
 - Skip Supermemory entirely (profile, recall and capture) for subagent sessions and headless runs (`cursor-agent -p`). `captureSubagents` / `SUPERMEMORY_CAPTURE_SUBAGENTS=true` and `captureHeadless` / `SUPERMEMORY_CAPTURE_HEADLESS=true` restore the previous behaviour.
 - Cursor cloud/background agents (`is_background_agent: true`) are skipped by default too, including ones you follow up on from the IDE, web or Slack. Set `captureHeadless: true` or `SUPERMEMORY_CAPTURE_HEADLESS=true` to keep memory in them.
