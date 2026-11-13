@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -37,7 +37,11 @@ afterAll(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-async function runHook(file: string, input: Record<string, unknown>) {
+async function runHook(
+  file: string,
+  input: Record<string, unknown>,
+  env: Record<string, string> = {},
+) {
   const child = Bun.spawn(["node", join(root, file)], {
     cwd: workspace,
     env: {
@@ -47,6 +51,7 @@ async function runHook(file: string, input: Record<string, unknown>) {
       CURSOR_PROJECT_DIR: workspace,
       SUPERMEMORY_API_KEY: "sm_test_key_0123456789",
       SUPERMEMORY_API_URL: server.url.toString(),
+      ...env,
     },
     stdin: "pipe",
     stdout: "pipe",
@@ -87,7 +92,7 @@ describe("Cursor hook integration", () => {
     const input = {
       conversation_id: "conversation-recall-skip",
       generation_id: "generation-keep",
-      prompt: "continue fixing the authentication flow",
+      prompt: "keep fixing the authentication flow",
       workspace_roots: [workspace],
     };
     expect(JSON.parse(await runHook("dist/prompt-recall.js", input))).toEqual({
@@ -150,5 +155,160 @@ describe("Cursor hook integration", () => {
     expect(saves).toHaveLength(savesBefore + 1);
     expect(saves.at(-1)?.body.metadata.sm_capture_mode).toBe("stop");
     expect(saves.at(-1)?.body.content).toContain("rotates atomically");
+  });
+test("skips every API call for subagent and background sessions unless opted in", async () => {
+    const transcriptPath = join(home, "subagent-transcript.jsonl");
+    writeFileSync(
+      transcriptPath,
+      [
+        { role: "user", content: "Explore the payment module and list every file that touches refunds in detail." },
+        { role: "assistant", content: "The refund flow lives in payments/refunds.ts and payments/ledger.ts, with retries in jobs/refund-retry.ts." },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+    );
+    const sessions = [
+      { conversation_id: "subagent-cursor", parent_conversation_id: "parent-1" },
+      { conversation_id: "subagent-grok", subagentType: "explore" },
+      { conversation_id: "background-agent", is_background_agent: true },
+    ];
+    for (const session of sessions) {
+      const before = requests.length;
+      const input = {
+        ...session,
+        generation_id: `${session.conversation_id}-gen`,
+        prompt: `look into the refund retries for ${session.conversation_id}`,
+        status: "completed",
+        transcript_path: transcriptPath,
+        workspace_roots: [workspace],
+      };
+      expect(JSON.parse(await runHook("dist/session-start.js", input))).toEqual({});
+      await runHook("dist/prompt-recall.js", input);
+      await runHook("dist/capture.js", input);
+      expect(requests.length).toBe(before);
+      const flag: Record<string, string> = {
+        [`SUPERMEMORY_CAPTURE_${"is_background_agent" in session ? "HEADLESS" : "SUBAGENTS"}`]: "true",
+      };
+      await runHook("dist/session-start.js", input, flag);
+      await runHook("dist/prompt-recall.js", input, flag);
+      await runHook("dist/capture.js", input, flag);
+      const paths = requests.slice(before).map((request) => request.path);
+      expect(paths).toContain("/v4/profile");
+      expect(paths).toContain("/v3/documents");
+    }
+  });
+
+  test("treats orchestrator sessions as interactive and honours captureOrchestrated", async () => {
+    const input = {
+      conversation_id: "conductor-session",
+      generation_id: "conductor-gen",
+      prompt: "wire the conductor workspace into the deploy script",
+      workspace_roots: [workspace],
+    };
+    const before = requests.length;
+    await runHook("dist/prompt-recall.js", input, { CONDUCTOR_WORKSPACE_PATH: workspace });
+    expect(requests.length).toBeGreaterThan(before);
+    const skipped = requests.length;
+    await runHook(
+      "dist/prompt-recall.js",
+      { ...input, conversation_id: "vk-session", prompt: "wire the kanban workspace into the deploy script" },
+      { VK_WORKSPACE_ID: "vk-1", SUPERMEMORY_CAPTURE_ORCHESTRATED: "false" },
+    );
+    expect(requests.length).toBe(skipped);
+  });
+
+  test("re-serves an identical query's recall per container within the window", async () => {
+    const prompt = "summarise the swarm worker task for the billing service";
+    const searches = () => requests.filter((request) => request.body?.q === prompt).length;
+    await runHook("dist/prompt-recall.js", { conversation_id: "worker-1", prompt, workspace_roots: [workspace] });
+    const once = searches();
+    expect(once).toBeGreaterThan(0);
+    await runHook("dist/prompt-recall.js", { conversation_id: "worker-2", prompt, workspace_roots: [workspace] });
+    expect(searches()).toBe(once);
+    const served = JSON.parse(await runHook("dist/inject-recall.js", { conversation_id: "worker-2" }));
+    expect(served.additional_context).toContain("- ◪ The auth flow uses rotating tokens");
+    const otherKey = { SUPERMEMORY_API_KEY: "sm_other_account_key_9876" };
+    await runHook("dist/prompt-recall.js", { conversation_id: "worker-4", prompt, workspace_roots: [workspace] }, otherKey);
+    expect(searches()).toBe(once * 2);
+    await runHook("dist/prompt-recall.js", { conversation_id: "worker-5", prompt, workspace_roots: [workspace] }, otherKey);
+    expect(searches()).toBe(once * 2);
+    const cacheDir = join(home, ".supermemory-cursor", "recall-queries");
+    expect(statSync(cacheDir).mode & 0o777).toBe(0o700);
+    for (const name of readdirSync(cacheDir)) {
+      expect(statSync(join(cacheDir, name)).mode & 0o777).toBe(0o600);
+      expect(readFileSync(join(cacheDir, name), "utf8")).not.toContain("sm_");
+    }
+    await runHook(
+      "dist/prompt-recall.js",
+      { conversation_id: "worker-3", prompt, workspace_roots: [workspace] },
+      { SUPERMEMORY_DEDUPE_RECALL_QUERIES: "false" },
+    );
+    expect(searches()).toBe(once * 3);
+    const logout = Bun.spawn(["node", join(root, "dist/cli.js"), "logout"], {
+      env: { ...Bun.env, HOME: home, USERPROFILE: home },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    expect(await logout.exited).toBe(0);
+    expect(existsSync(cacheDir)).toBe(false);
+  });
+
+  test("replaces a long opening prompt captured from this machine in the last day with a marker", async () => {
+    const opening =
+      "Run the nightly reconciliation task across every ledger shard, compare each balance against the upstream bank statement, flag any mismatch above one cent, and report the shard, account and delta for each mismatch you find.";
+    const capture = async (id: string, env: Record<string, string> = {}, text = opening) => {
+      const transcriptPath = join(home, `${id}.jsonl`);
+      writeFileSync(
+        transcriptPath,
+        [
+          { role: "user", content: text },
+          { role: "assistant", content: `Shard report for ${id}: two mismatches found in the EU ledger and queued for review.` },
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join("\n"),
+      );
+      await runHook(
+        "dist/capture.js",
+        { conversation_id: id, generation_id: `${id}-gen`, status: "completed", transcript_path: transcriptPath, workspace_roots: [workspace] },
+        env,
+      );
+      return requests.filter((request) => request.path === "/v3/documents").at(-1)?.body.content as string;
+    };
+    expect(await capture("opening-1")).toContain(opening);
+    const second = await capture("opening-2");
+    expect(second).not.toContain(opening);
+    expect(second).toContain("opening prompt already captured from this machine");
+    expect(second).toContain("Shard report for opening-2");
+    expect(await capture("opening-3", { SUPERMEMORY_DEDUPE_OPENING_PROMPT: "false" })).toContain(opening);
+    const dir = join(home, ".supermemory-cursor", "opening-prompts");
+    const dayAgo = new Date(Date.now() - 25 * 60 * 60_000);
+    for (const name of readdirSync(dir)) utimesSync(join(dir, name), dayAgo, dayAgo);
+    expect(await capture("opening-4")).toContain(opening);
+    const short = "Run the nightly reconciliation task across every ledger shard and report mismatches.";
+    expect(await capture("opening-5", {}, short)).toContain(short);
+    expect(await capture("opening-6", {}, short)).toContain(short);
+    const otherKey = { SUPERMEMORY_API_KEY: "sm_other_account_key_9876" };
+    expect(await capture("opening-7", otherKey)).toContain(opening);
+    expect(await capture("opening-8", otherKey)).toContain("opening prompt already captured from this machine");
+    for (const name of readdirSync(dir)) {
+      expect(statSync(join(dir, name)).mode & 0o777).toBe(0o600);
+    }
+    const signalConfig = join(home, ".config", "cursor", "supermemory.json");
+    mkdirSync(join(home, ".config", "cursor"), { recursive: true });
+    writeFileSync(signalConfig, JSON.stringify({ signalExtraction: true }));
+    const remembered = `${opening} Please remember the reconciliation cut-off.`;
+    expect(await capture("opening-9", {}, remembered)).toContain(remembered);
+    const signalled = await capture("opening-10", {}, remembered);
+    expect(signalled).toContain("opening prompt already captured from this machine");
+    expect(signalled).toContain("Shard report for opening-10");
+    rmSync(signalConfig, { force: true });
+    const logout = Bun.spawn(["node", join(root, "dist/cli.js"), "logout"], {
+      env: { ...Bun.env, HOME: home, USERPROFILE: home },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    expect(await logout.exited).toBe(0);
+    expect(existsSync(dir)).toBe(false);
+    expect(await capture("opening-11")).toContain(opening);
   });
 });

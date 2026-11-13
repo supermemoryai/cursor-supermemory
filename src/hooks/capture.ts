@@ -1,12 +1,18 @@
 import { createHash } from "node:crypto";
 import { loadConfig, getAuthToken, isConfigured } from "../config.ts";
-import { addMemory, AGENT_ENTITY_CONTEXT } from "../hook-api.ts";
+import { addMemory, AGENT_ENTITY_CONTEXT, apiBackend } from "../hook-api.ts";
 import {
   deleteHookState,
   readHookState,
   writeHookState,
 } from "../hook-state.ts";
 import { getResolvedTags } from "../tags.ts";
+import { sessionSkipReason } from "../session-filter.ts";
+import {
+  openingPromptMarker,
+  recordOpeningPrompt,
+  wasOpeningPromptCaptured,
+} from "../repeat-guard.ts";
 import {
   conversationId,
   type CursorHookInput,
@@ -137,6 +143,7 @@ async function capture(input: CursorHookInput): Promise<void> {
 
     const id = conversationId(input);
     const state = readHookState(id);
+    if (sessionSkipReason(input, config, state)) return;
     const entries = parseTranscript(await readTextFile(transcriptPath));
     const capturedEntries =
       state.transcriptPath === transcriptPath
@@ -150,10 +157,33 @@ async function capture(input: CursorHookInput): Promise<void> {
       config.signalKeywords,
       config.signalTurnsBefore,
     );
-    const content = formatCapture(selected);
+    const tags = getResolvedTags(root, config);
+    const opening =
+      config.dedupeOpeningPrompt &&
+      start === 0 &&
+      entries[0]?.role === "user" &&
+      selected[0] === entries[0]
+        ? entries[0].text
+        : undefined;
+    const scope =
+      opening === undefined
+        ? undefined
+        : {
+            backend: apiBackend(config.baseUrl, config.apiVersion),
+            credential: await auth().catch(() => ""),
+            containerTags: [tags.canonical],
+          };
+    const repeated = !!scope && wasOpeningPromptCaptured(scope, opening!);
+    const content = formatCapture(
+      repeated
+        ? [
+            { role: "user", text: openingPromptMarker(scope!, opening!) },
+            ...selected.slice(1),
+          ]
+        : selected,
+    );
     if (content.length < 100) return;
 
-    const tags = getResolvedTags(root, config);
     const generation =
       input.generation_id ||
       createHash("sha256").update(content).digest("hex").slice(0, 32);
@@ -179,6 +209,7 @@ async function capture(input: CursorHookInput): Promise<void> {
       },
       config.apiVersion,
     );
+    if (scope && !repeated) recordOpeningPrompt(scope, opening!);
     writeHookState(id, {
       capturedEntries: entries.length,
       transcriptPath,
