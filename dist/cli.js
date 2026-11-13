@@ -37,8 +37,10 @@ var OPENING_WINDOW_MS = 24 * 60 * 60000;
 function guardDir(name) {
   return join(homedir(), ".supermemory-cursor", name);
 }
-function clearRecallCache() {
-  rmSync(guardDir("recall-queries"), { recursive: true, force: true });
+function clearAccountCaches() {
+  for (const name of ["recall-queries", "opening-prompts"]) {
+    rmSync(guardDir(name), { recursive: true, force: true });
+  }
 }
 
 // src/auth.ts
@@ -299,7 +301,7 @@ function refreshCredentials(config) {
       if (error instanceof AuthError && ["invalid_grant", "invalid_client"].includes(error.code)) {
         const { accessToken: _access, refreshToken: _refresh, ...registration } = credentials;
         writeJson(CREDENTIALS_FILE, registration);
-        clearRecallCache();
+        clearAccountCaches();
         if (error.code === "invalid_client")
           fs.rmSync(CLIENT_FILE, { force: true });
         throw authRequired();
@@ -339,7 +341,7 @@ async function settleAuth() {
 }
 async function clearCredentials() {
   return withAuthLock(async (remaining) => {
-    clearRecallCache();
+    clearAccountCaches();
     const credentials = readJson(CREDENTIALS_FILE);
     if (credentials?.type === "oauth" && credentials.refreshToken) {
       await oauthRequest(issuerEndpoint(credentials.revocationEndpoint, credentials.issuer), {

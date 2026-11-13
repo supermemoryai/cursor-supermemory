@@ -181,12 +181,13 @@ host runs on its own. Each flag above restores both recall and capture for its c
 - **Helper prompts.** Cursor's chat-title generation and similar helper calls never reach plugin hooks, so
   there is nothing to skip.
 
-Swarms that replay one task prompt are deduplicated on this machine. An identical prompt searched against
-the same container in the last 10 minutes re-serves that search's result instead of calling the API again;
+Swarms that replay one task prompt are deduplicated on this machine, per API URL, account and container.
+An identical prompt searched against the same container in the last 10 minutes re-serves that search's result instead of calling the API again;
 only a search that succeeded is reused, so a failed one is retried next time. An opening prompt of at least
 200 characters that was uploaded for the same container in the last 24 hours is sent as a one-line marker;
 only a successful upload counts. The entries live under `~/.supermemory-cursor/`
-(`recall-queries/`, `opening-prompts/`, 500 entries each, expired ones pruned).
+(`recall-queries/`, `opening-prompts/`, 500 entries each, expired ones pruned, files `0600`) and are
+deleted on logout.
 
 ### REST compatibility
 

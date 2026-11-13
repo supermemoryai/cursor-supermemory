@@ -285,6 +285,10 @@ export function getProfiles(
   );
 }
 
+export function apiBackend(baseUrl: string | null, apiVersion?: string): string {
+  return `${resolveApiVersion(baseUrl, apiVersion)} ${baseUrl || DEFAULT_BASE_URL}`;
+}
+
 export function getSearches(
   baseUrl: string | null,
   auth: AuthSource,

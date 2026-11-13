@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { loadConfig, getAuthToken, isConfigured } from "../config.ts";
-import { addMemory, AGENT_ENTITY_CONTEXT } from "../hook-api.ts";
+import { addMemory, AGENT_ENTITY_CONTEXT, apiBackend } from "../hook-api.ts";
 import {
   deleteHookState,
   readHookState,
@@ -165,12 +165,19 @@ async function capture(input: CursorHookInput): Promise<void> {
       selected[0] === entries[0]
         ? entries[0].text
         : undefined;
-    const repeated =
-      opening !== undefined && wasOpeningPromptCaptured(tags.canonical, opening);
+    const scope =
+      opening === undefined
+        ? undefined
+        : {
+            backend: apiBackend(config.baseUrl, config.apiVersion),
+            credential: await auth().catch(() => ""),
+            containerTags: [tags.canonical],
+          };
+    const repeated = !!scope && wasOpeningPromptCaptured(scope, opening!);
     const content = formatCapture(
       repeated
         ? [
-            { role: "user", text: openingPromptMarker(tags.canonical, opening!) },
+            { role: "user", text: openingPromptMarker(scope!, opening!) },
             ...selected.slice(1),
           ]
         : selected,
@@ -202,9 +209,7 @@ async function capture(input: CursorHookInput): Promise<void> {
       },
       config.apiVersion,
     );
-    if (opening !== undefined && !repeated) {
-      recordOpeningPrompt(tags.canonical, opening);
-    }
+    if (scope && !repeated) recordOpeningPrompt(scope, opening!);
     writeHookState(id, {
       capturedEntries: entries.length,
       transcriptPath,

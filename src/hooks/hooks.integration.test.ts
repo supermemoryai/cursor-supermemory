@@ -287,5 +287,28 @@ test("skips every API call for subagent and background sessions unless opted in"
     const short = "Run the nightly reconciliation task across every ledger shard and report mismatches.";
     expect(await capture("opening-5", {}, short)).toContain(short);
     expect(await capture("opening-6", {}, short)).toContain(short);
+    const otherKey = { SUPERMEMORY_API_KEY: "sm_other_account_key_9876" };
+    expect(await capture("opening-7", otherKey)).toContain(opening);
+    expect(await capture("opening-8", otherKey)).toContain("opening prompt already captured from this machine");
+    for (const name of readdirSync(dir)) {
+      expect(statSync(join(dir, name)).mode & 0o777).toBe(0o600);
+    }
+    const signalConfig = join(home, ".config", "cursor", "supermemory.json");
+    mkdirSync(join(home, ".config", "cursor"), { recursive: true });
+    writeFileSync(signalConfig, JSON.stringify({ signalExtraction: true }));
+    const remembered = `${opening} Please remember the reconciliation cut-off.`;
+    expect(await capture("opening-9", {}, remembered)).toContain(remembered);
+    const signalled = await capture("opening-10", {}, remembered);
+    expect(signalled).toContain("opening prompt already captured from this machine");
+    expect(signalled).toContain("Shard report for opening-10");
+    rmSync(signalConfig, { force: true });
+    const logout = Bun.spawn(["node", join(root, "dist/cli.js"), "logout"], {
+      env: { ...Bun.env, HOME: home, USERPROFILE: home },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    expect(await logout.exited).toBe(0);
+    expect(existsSync(dir)).toBe(false);
+    expect(await capture("opening-11")).toContain(opening);
   });
 });

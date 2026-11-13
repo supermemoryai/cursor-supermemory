@@ -35,9 +35,14 @@ function guardDir(name) {
 function normalize(text) {
   return text.trim().replace(/\s+/g, " ");
 }
-function textKey(containerTag, text) {
-  return createHash("sha256").update(`${containerTag}
-${normalize(text)}`).digest("hex");
+function scopedKey(scope, text) {
+  return createHash("sha256").update([
+    scope.backend,
+    createHash("sha256").update(scope.credential).digest("hex"),
+    [...new Set(scope.containerTags)].join(","),
+    normalize(text)
+  ].join(`
+`)).digest("hex");
 }
 function prune(dir, maxAgeMs) {
   const now = Date.now();
@@ -73,19 +78,21 @@ function record(dir, key, content, maxAgeMs) {
     prune(dir, maxAgeMs);
   } catch {}
 }
-function clearRecallCache() {
-  rmSync(guardDir("recall-queries"), { recursive: true, force: true });
+function clearAccountCaches() {
+  for (const name of ["recall-queries", "opening-prompts"]) {
+    rmSync(guardDir(name), { recursive: true, force: true });
+  }
 }
-function wasOpeningPromptCaptured(containerTag, prompt) {
-  return normalize(prompt).length >= MIN_OPENING_PROMPT_LENGTH && readFresh(join(guardDir("opening-prompts"), textKey(containerTag, prompt)), OPENING_WINDOW_MS) !== null;
+function wasOpeningPromptCaptured(scope, prompt) {
+  return !!scope.credential && normalize(prompt).length >= MIN_OPENING_PROMPT_LENGTH && readFresh(join(guardDir("opening-prompts"), scopedKey(scope, prompt)), OPENING_WINDOW_MS) !== null;
 }
-function recordOpeningPrompt(containerTag, prompt) {
-  if (normalize(prompt).length < MIN_OPENING_PROMPT_LENGTH)
+function recordOpeningPrompt(scope, prompt) {
+  if (!scope.credential || normalize(prompt).length < MIN_OPENING_PROMPT_LENGTH)
     return;
-  record(guardDir("opening-prompts"), textKey(containerTag, prompt), "", OPENING_WINDOW_MS);
+  record(guardDir("opening-prompts"), scopedKey(scope, prompt), "", OPENING_WINDOW_MS);
 }
-function openingPromptMarker(containerTag, prompt) {
-  return `[opening prompt already captured from this machine, sha256:${textKey(containerTag, prompt).slice(0, 16)}]`;
+function openingPromptMarker(scope, prompt) {
+  return `[opening prompt already captured from this machine, sha256:${scopedKey(scope, prompt).slice(0, 16)}]`;
 }
 
 // src/auth.ts
@@ -299,7 +306,7 @@ function refreshCredentials(config) {
       if (error instanceof AuthError && ["invalid_grant", "invalid_client"].includes(error.code)) {
         const { accessToken: _access, refreshToken: _refresh, ...registration } = credentials;
         writeJson(CREDENTIALS_FILE, registration);
-        clearRecallCache();
+        clearAccountCaches();
         if (error.code === "invalid_client")
           fs.rmSync(CLIENT_FILE, { force: true });
         throw authRequired();
@@ -3959,6 +3966,9 @@ async function addMemory(baseUrl, auth, content, containerTag, metadata, options
   }
   return result;
 }
+function apiBackend(baseUrl, apiVersion) {
+  return `${resolveApiVersion(baseUrl, apiVersion)} ${baseUrl || DEFAULT_API_URL}`;
+}
 
 // src/hook-state.ts
 import { createHash as createHash4 } from "node:crypto";
@@ -4596,9 +4606,14 @@ async function capture(input) {
     const selected = selectCaptureEntries(entries, start, config.signalExtraction, config.signalKeywords, config.signalTurnsBefore);
     const tags = getResolvedTags(root, config);
     const opening = config.dedupeOpeningPrompt && start === 0 && entries[0]?.role === "user" && selected[0] === entries[0] ? entries[0].text : undefined;
-    const repeated = opening !== undefined && wasOpeningPromptCaptured(tags.canonical, opening);
+    const scope = opening === undefined ? undefined : {
+      backend: apiBackend(config.baseUrl, config.apiVersion),
+      credential: await auth().catch(() => ""),
+      containerTags: [tags.canonical]
+    };
+    const repeated = !!scope && wasOpeningPromptCaptured(scope, opening);
     const content = formatCapture(repeated ? [
-      { role: "user", text: openingPromptMarker(tags.canonical, opening) },
+      { role: "user", text: openingPromptMarker(scope, opening) },
       ...selected.slice(1)
     ] : selected);
     if (content.length < 100)
@@ -4616,9 +4631,8 @@ async function capture(input) {
       customId: `cursor:capture:${createHash6("sha256").update(`${id}:${generation}`).digest("hex")}`,
       entityContext: AGENT_ENTITY_CONTEXT
     }, config.apiVersion);
-    if (opening !== undefined && !repeated) {
-      recordOpeningPrompt(tags.canonical, opening);
-    }
+    if (scope && !repeated)
+      recordOpeningPrompt(scope, opening);
     writeHookState(id, {
       capturedEntries: entries.length,
       transcriptPath

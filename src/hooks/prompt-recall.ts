@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { loadConfig, getApiBaseUrl, getAuthToken, isConfigured } from "../config.ts";
-import { getSearches, resolveApiVersion } from "../hook-api.ts";
+import { loadConfig, getAuthToken, isConfigured } from "../config.ts";
+import { apiBackend, getSearches } from "../hook-api.ts";
 import { readHookState, writeHookState, type HookState } from "../hook-state.ts";
 import { getResolvedTags } from "../tags.ts";
 import { sessionSkipReason } from "../session-filter.ts";
@@ -116,7 +116,7 @@ async function recall(
   const query = input.prompt!.slice(0, MAX_QUERY_LENGTH);
   const token = await getAuthToken(config);
   const scope = {
-    backend: `${resolveApiVersion(config.baseUrl, config.apiVersion)} ${getApiBaseUrl(config)}`,
+    backend: apiBackend(config.baseUrl, config.apiVersion),
     credential: token,
     containerTags: tags.allReads,
   };
