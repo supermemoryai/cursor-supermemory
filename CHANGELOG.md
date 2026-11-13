@@ -1,10 +1,12 @@
 # Changelog
 
-## Unreleased
+## 1.4.0
 
-- Skip Supermemory entirely (profile, recall and capture) for subagent sessions and headless runs (`cursor-agent -p`, background agents). `captureSubagents` / `SUPERMEMORY_CAPTURE_SUBAGENTS=true` and `captureHeadless` / `SUPERMEMORY_CAPTURE_HEADLESS=true` restore the previous behaviour.
+- Skip Supermemory entirely (profile, recall and capture) for subagent sessions and headless runs (`cursor-agent -p`). `captureSubagents` / `SUPERMEMORY_CAPTURE_SUBAGENTS=true` and `captureHeadless` / `SUPERMEMORY_CAPTURE_HEADLESS=true` restore the previous behaviour.
+- Cursor cloud/background agents (`is_background_agent: true`) are skipped by default too, including ones you follow up on from the IDE, web or Slack. Set `captureHeadless: true` or `SUPERMEMORY_CAPTURE_HEADLESS=true` to keep memory in them.
 - Treat Conductor and Vibe Kanban sessions as interactive; `captureOrchestrated: false` skips them.
-- Recall an identical prompt once per container per 10 minutes on a machine (`dedupeRecallQueries`), and capture an opening prompt already captured from this machine as a one-line marker (`dedupeOpeningPrompt`).
+- Re-serve the result of an identical prompt searched against the same container in the last 10 minutes instead of searching again (`dedupeRecallQueries`), and capture an opening prompt of 200+ characters uploaded from this machine in the last 24 hours as a one-line marker (`dedupeOpeningPrompt`).
+- `SUPERMEMORY_CAPTURE_*` and `SUPERMEMORY_DEDUPE_*` accept `true`/`1`/`yes`/`on` and `false`/`0`/`no`/`off`.
 
 ## 1.3.1
 

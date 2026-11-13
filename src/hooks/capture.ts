@@ -9,9 +9,9 @@ import {
 import { getResolvedTags } from "../tags.ts";
 import { sessionSkipReason } from "../session-filter.ts";
 import {
-  claimOpeningPrompt,
   openingPromptMarker,
-  releaseOpeningPrompt,
+  recordOpeningPrompt,
+  wasOpeningPromptCaptured,
 } from "../repeat-guard.ts";
 import {
   conversationId,
@@ -165,23 +165,17 @@ async function capture(input: CursorHookInput): Promise<void> {
       selected[0] === entries[0]
         ? entries[0].text
         : undefined;
-    const ownsOpening =
-      opening !== undefined && claimOpeningPrompt(tags.canonical, opening);
-    const releaseOpening = () => {
-      if (ownsOpening) releaseOpeningPrompt(tags.canonical, opening!);
-    };
+    const repeated =
+      opening !== undefined && wasOpeningPromptCaptured(tags.canonical, opening);
     const content = formatCapture(
-      opening !== undefined && !ownsOpening
+      repeated
         ? [
-            { role: "user", text: openingPromptMarker(tags.canonical, opening) },
+            { role: "user", text: openingPromptMarker(tags.canonical, opening!) },
             ...selected.slice(1),
           ]
         : selected,
     );
-    if (content.length < 100) {
-      releaseOpening();
-      return;
-    }
+    if (content.length < 100) return;
 
     const generation =
       input.generation_id ||
@@ -207,10 +201,10 @@ async function capture(input: CursorHookInput): Promise<void> {
         entityContext: AGENT_ENTITY_CONTEXT,
       },
       config.apiVersion,
-    ).catch((error) => {
-      releaseOpening();
-      throw error;
-    });
+    );
+    if (opening !== undefined && !repeated) {
+      recordOpeningPrompt(tags.canonical, opening);
+    }
     writeHookState(id, {
       capturedEntries: entries.length,
       transcriptPath,
