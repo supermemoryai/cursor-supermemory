@@ -16,7 +16,7 @@ var __export = (target, all) => {
 var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // src/hooks/capture.ts
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash6 } from "node:crypto";
 
 // src/config.ts
 import path2 from "node:path";
@@ -3777,6 +3777,7 @@ class Supermemory extends SupermemoryClient {
 
 // src/hook-api.ts
 var REQUEST_TIMEOUT_MS = 3000;
+var SESSION_TIMEOUT_MS = 15000;
 var INTEGRITY_VERSION = 1;
 var SEED = "7f2a9c4b8e1d6f3a5c0b9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a";
 function resolveApiVersion(baseUrl, apiVersion) {
@@ -3883,6 +3884,30 @@ async function addMemory(baseUrl, auth2, content, containerTag, metadata, option
     customId: options.customId,
     entityContext: options.entityContext
   });
+  return acknowledged(result, version2);
+}
+async function addSession(baseUrl, auth2, containerTag, raw, options) {
+  const result = await sdkRequest((await sdk(baseUrl, auth2, containerTag)).add(containerTag, {
+    content: raw,
+    id: options.id,
+    supportingContext: options.entityContext,
+    metadata: {
+      sm_source: "cursor",
+      ...options.metadata,
+      sm_session_generation: options.generation,
+      sm_session_offset: options.offset
+    },
+    taskType: "memory",
+    dreaming: "dynamic"
+  }, {
+    abortSignal: AbortSignal.timeout(SESSION_TIMEOUT_MS),
+    timeoutInSeconds: SESSION_TIMEOUT_MS / 1000,
+    maxRetries: 0,
+    headers: { "x-sm-session": "cursor" }
+  }));
+  return acknowledged(result, "v5");
+}
+function acknowledged(result, version2) {
   if (typeof result?.id !== "string" || !result.id.trim() || version2 === "v5" && ![
     "unknown",
     "queued",
@@ -3934,24 +3959,105 @@ function deleteHookState(conversationId) {
   rmSync(statePath(conversationId), { force: true });
 }
 
-// src/tags.ts
-import { execSync } from "node:child_process";
+// src/session.ts
 import { createHash as createHash4 } from "node:crypto";
 import {
-  existsSync,
+  closeSync,
+  fstatSync,
+  mkdirSync as mkdirSync2,
+  openSync,
   readFileSync as readFileSync2,
+  readSync,
+  renameSync as renameSync2,
+  writeFileSync as writeFileSync2
+} from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { join as join3 } from "node:path";
+var HEAD_BYTES = 4096;
+function sessionDir() {
+  return join3(homedir2(), ".supermemory-cursor", "session");
+}
+function cursorPath(sessionId) {
+  const id = createHash4("sha256").update(sessionId).digest("hex").slice(0, 32);
+  return join3(sessionDir(), `${id}.json`);
+}
+function readCursor(sessionId) {
+  try {
+    const cursor = JSON.parse(readFileSync2(cursorPath(sessionId), "utf8"));
+    if (typeof cursor.offset === "number" && typeof cursor.generation === "number") {
+      return {
+        generation: cursor.generation,
+        headHash: typeof cursor.headHash === "string" ? cursor.headHash : "",
+        offset: cursor.offset
+      };
+    }
+  } catch {}
+  return { generation: 0, headHash: "", offset: 0 };
+}
+function writeCursor(sessionId, cursor) {
+  mkdirSync2(sessionDir(), { recursive: true, mode: 448 });
+  const filePath = cursorPath(sessionId);
+  const tempPath = `${filePath}.${process.pid}.tmp`;
+  writeFileSync2(tempPath, `${JSON.stringify(cursor)}
+`, { mode: 384 });
+  renameSync2(tempPath, filePath);
+}
+function hashHead(fd, length) {
+  if (length <= 0)
+    return "";
+  const buffer = Buffer.alloc(length);
+  readSync(fd, buffer, 0, length, 0);
+  return createHash4("sha256").update(buffer).digest("hex");
+}
+function readRawDelta(transcriptPath, sessionId) {
+  const previous = readCursor(sessionId);
+  const fd = openSync(transcriptPath, "r");
+  try {
+    const size = fstatSync(fd).size;
+    const rewritten = size < previous.offset || hashHead(fd, Math.min(HEAD_BYTES, previous.offset)) !== previous.headHash;
+    const generation = previous.generation + (rewritten ? 1 : 0);
+    const offset = rewritten ? 0 : previous.offset;
+    if (size <= offset)
+      return null;
+    const buffer = Buffer.alloc(size - offset);
+    readSync(fd, buffer, 0, buffer.length, offset);
+    const end = buffer.lastIndexOf(10) + 1;
+    if (!end)
+      return null;
+    const next = {
+      generation,
+      headHash: hashHead(fd, Math.min(HEAD_BYTES, offset + end)),
+      offset: offset + end
+    };
+    return {
+      commit: () => writeCursor(sessionId, next),
+      generation,
+      offset,
+      raw: buffer.subarray(0, end).toString("utf8")
+    };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// src/tags.ts
+import { execSync } from "node:child_process";
+import { createHash as createHash5 } from "node:crypto";
+import {
+  existsSync,
+  readFileSync as readFileSync3,
   realpathSync
 } from "node:fs";
-import { hostname, homedir as homedir2, userInfo } from "node:os";
+import { hostname, homedir as homedir3, userInfo } from "node:os";
 import {
   basename,
   dirname,
-  join as join3,
+  join as join4,
   resolve,
   sep
 } from "node:path";
 function sha2562(input) {
-  return createHash4("sha256").update(input).digest("hex").slice(0, 16);
+  return createHash5("sha256").update(input).digest("hex").slice(0, 16);
 }
 function getGitRoot(directory) {
   const isolateWorktrees = process.env.SUPERMEMORY_ISOLATE_WORKTREES === "true";
@@ -4053,7 +4159,7 @@ function readJson3(filePath) {
   try {
     if (!existsSync(filePath))
       return null;
-    return JSON.parse(readFileSync2(filePath, "utf-8"));
+    return JSON.parse(readFileSync3(filePath, "utf-8"));
   } catch {
     return null;
   }
@@ -4120,13 +4226,13 @@ function stripJsoncComments(content) {
   return result.replace(/,\s*([}\]])/g, "$1");
 }
 function loadOpenCodeConfig() {
-  const configDir = join3(homedir2(), ".config", "opencode");
+  const configDir = join4(homedir3(), ".config", "opencode");
   for (const filename of ["supermemory.jsonc", "supermemory.json"]) {
     try {
-      const configPath = join3(configDir, filename);
+      const configPath = join4(configDir, filename);
       if (!existsSync(configPath))
         continue;
-      return JSON.parse(stripJsoncComments(readFileSync2(configPath, "utf-8")));
+      return JSON.parse(stripJsoncComments(readFileSync3(configPath, "utf-8")));
     } catch {
       return null;
     }
@@ -4182,7 +4288,7 @@ function getLegacyCursorProjectTags(directory, config) {
 function getLegacyClaudeTags(directory) {
   const basePath = getProjectBasePath(directory);
   const projectHash = sha2562(basePath);
-  const config = readJson3(join3(basePath, ".claude", ".supermemory-claude", "config.json"));
+  const config = readJson3(join4(basePath, ".claude", ".supermemory-claude", "config.json"));
   return {
     personal: uniqueTags([
       stringValue(config?.personalContainerTag),
@@ -4197,7 +4303,7 @@ function getLegacyClaudeTags(directory) {
   };
 }
 function getLegacyCodexTags(directory) {
-  const config = readJson3(join3(homedir2(), ".codex", "supermemory.json"));
+  const config = readJson3(join4(homedir3(), ".codex", "supermemory.json"));
   const prefix = stringValue(config?.containerTagPrefix) || "codex";
   const userIdentity = getGitEmail(directory) || process.env.USER || process.env.USERNAME || hostname();
   const userHash = sha2562(userIdentity);
@@ -4408,6 +4514,17 @@ function formatCapture(entries) {
 
 `);
 }
+function captureMetadata(tags, id) {
+  return {
+    type: "conversation",
+    project: tags.projectName,
+    sm_project_id: tags.projectId,
+    sm_scope: "personal",
+    sm_capture_mode: "stop",
+    sessionId: id,
+    timestamp: new Date().toISOString()
+  };
+}
 async function capture(input) {
   if ([input.status, input.reason].some((value) => ["aborted", "error"].includes(value ?? ""))) {
     return;
@@ -4422,6 +4539,23 @@ async function capture(input) {
       return;
     const auth2 = () => getAuthToken(config);
     const id = conversationId(input);
+    if (resolveApiVersion(config.baseUrl, config.apiVersion) === "v5") {
+      if (!input.conversation_id && !input.session_id)
+        return;
+      const delta = readRawDelta(transcriptPath, id);
+      if (!delta)
+        return;
+      const tags2 = getResolvedTags(root, config);
+      await addSession(config.baseUrl, auth2, tags2.canonical, delta.raw, {
+        id,
+        generation: delta.generation,
+        offset: delta.offset,
+        metadata: captureMetadata(tags2, id),
+        entityContext: AGENT_ENTITY_CONTEXT
+      });
+      delta.commit();
+      return;
+    }
     const state = readHookState(id);
     const entries = parseTranscript(await readTextFile(transcriptPath));
     const capturedEntries = state.transcriptPath === transcriptPath ? state.capturedEntries ?? 0 : 0;
@@ -4431,17 +4565,9 @@ async function capture(input) {
     if (content.length < 100)
       return;
     const tags = getResolvedTags(root, config);
-    const generation = input.generation_id || createHash5("sha256").update(content).digest("hex").slice(0, 32);
-    await addMemory(config.baseUrl, auth2, content, tags.canonical, {
-      type: "conversation",
-      project: tags.projectName,
-      sm_project_id: tags.projectId,
-      sm_scope: "personal",
-      sm_capture_mode: "stop",
-      sessionId: id,
-      timestamp: new Date().toISOString()
-    }, {
-      customId: `cursor:capture:${createHash5("sha256").update(`${id}:${generation}`).digest("hex")}`,
+    const generation = input.generation_id || createHash6("sha256").update(content).digest("hex").slice(0, 32);
+    await addMemory(config.baseUrl, auth2, content, tags.canonical, captureMetadata(tags, id), {
+      customId: `cursor:capture:${createHash6("sha256").update(`${id}:${generation}`).digest("hex")}`,
       entityContext: AGENT_ENTITY_CONTEXT
     }, config.apiVersion);
     writeHookState(id, {

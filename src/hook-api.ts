@@ -2,6 +2,7 @@ import { createHash, createHmac } from "node:crypto";
 import { Supermemory, type AddRequest, type ProfileRequest } from "supermemory";
 import { DEFAULT_API_URL as DEFAULT_BASE_URL } from "./config.ts";
 const REQUEST_TIMEOUT_MS = 3_000;
+const SESSION_TIMEOUT_MS = 15_000;
 const INTEGRITY_VERSION = 1;
 const SEED = "7f2a9c4b8e1d6f3a5c0b9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a";
 
@@ -206,6 +207,50 @@ export async function addMemory(
           customId: options.customId,
           entityContext: options.entityContext,
         });
+  return acknowledged(result, version);
+}
+
+export async function addSession(
+  baseUrl: string | null,
+  auth: AuthSource,
+  containerTag: string,
+  raw: string,
+  options: {
+    id: string;
+    generation: number;
+    offset: number;
+    metadata: Record<string, unknown>;
+    entityContext?: string;
+  },
+): Promise<any> {
+  const result = await sdkRequest(
+    (await sdk(baseUrl, auth, containerTag)).add(
+      containerTag,
+      {
+        content: raw,
+        id: options.id,
+        supportingContext: options.entityContext,
+        metadata: {
+          sm_source: "cursor",
+          ...options.metadata,
+          sm_session_generation: options.generation,
+          sm_session_offset: options.offset,
+        } as AddRequest["metadata"],
+        taskType: "memory",
+        dreaming: "dynamic",
+      },
+      {
+        abortSignal: AbortSignal.timeout(SESSION_TIMEOUT_MS),
+        timeoutInSeconds: SESSION_TIMEOUT_MS / 1_000,
+        maxRetries: 0,
+        headers: { "x-sm-session": "cursor" },
+      },
+    ),
+  );
+  return acknowledged(result, "v5");
+}
+
+function acknowledged(result: any, version: "v5" | "legacy"): any {
   if (
     typeof result?.id !== "string" ||
     !result.id.trim() ||

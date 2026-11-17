@@ -141,7 +141,7 @@ Per-workspace overrides. Add to `.gitignore` if it contains an API key. Project 
 | `maxMemories` | Max project memories injected at session start | `10` |
 | `maxProjectMemories` | Max project memories injected at session start | `5` |
 | `injectProfile` | Whether to inject user profile at session start | `true` |
-| `signalExtraction` | Capture only turns containing durable-signal keywords | `false` |
+| `signalExtraction` | Capture only turns containing durable-signal keywords (legacy API only) | `false` |
 | `signalKeywords` | Keywords that trigger signal-based capture | `remember`, `architecture`, `decision`, `bug`, `fix` |
 | `signalTurnsBefore` | Number of nearby turns retained around a signal | `3` |
 
@@ -151,7 +151,7 @@ Create or edit the config file directly, or run the `/supermemory-config` comman
 
 The hosted API root (`https://api.supermemory.ai`, including equivalent case/default-port/trailing-slash spellings) defaults to v5. Custom URLs keep the v3/v4 REST contract by default, including their path prefix and bearer key, so older self-hosted servers below 0.0.9 remain usable. After upgrading your custom server, opt into v5 with `"apiVersion": "v5"` or `SUPERMEMORY_API_VERSION=v5`. An explicit `legacy` also supports hosted rollback if that server still serves v3/v4. Invalid versions fail the memory operation; there is no failed-write version probing or fallback to the hosted API.
 
-Recall explicitly uses memories search, threshold `0.55`, ten candidates per namespace, no reranking or query rewriting. The existing local configured threshold floor, five-result cap, excerpts and session dedup remain. Session context uses query-free profiles and renders both old string facts and v5 object facts. Reads and capture retain the three-second request budget and zero automatic transport retries. Capture keeps its generation IDs and POST append/diff semantics, advancing its cursor only on valid document acceptance; acceptance is not completed processing or exactly-once billing. Dynamic processing is retained and can delay newly recallable facts by minutes; no billable instant processing is enabled.
+Recall explicitly uses memories search, threshold `0.55`, ten candidates per namespace, no reranking or query rewriting. The existing local configured threshold floor, five-result cap, excerpts and session dedup remain. Session context uses query-free profiles and renders both old string facts and v5 object facts. Reads retain the three-second request budget and zero automatic transport retries. On v5, capture sends the raw transcript lines added since its last accepted send to one document per conversation with `x-sm-session: cursor`, a fifteen-second budget and no retries, and the server keeps the user and assistant text as memory. Legacy capture keeps its generation IDs and POST append/diff semantics. Both advance their cursor only on valid document acceptance; acceptance is not completed processing or exactly-once billing. Dynamic processing is retained and can delay newly recallable facts by minutes; no billable instant processing is enabled.
 
 These are client contract guarantees, not a live-backend historical-data/ranking parity claim. No namespace move, merge, deletion or backfill is performed. Hosted MCP tool schemas and approvals remain unchanged because MCP is a separate protocol.
 

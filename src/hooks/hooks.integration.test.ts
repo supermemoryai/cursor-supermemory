@@ -1,14 +1,21 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const root = join(import.meta.dir, "..", "..");
 const home = mkdtempSync(join(tmpdir(), "cursor-supermemory-hooks-"));
 const workspace = join(home, "workspace");
-const requests: Array<{ path: string; body: any }> = [];
+const requests: Array<{ path: string; body: any; headers: Headers }> = [];
 
 let server: ReturnType<typeof Bun.serve>;
+let failSessions = false;
 
 beforeAll(() => {
   mkdirSync(workspace, { recursive: true });
@@ -16,7 +23,8 @@ beforeAll(() => {
     port: 0,
     async fetch(request) {
       const body = await request.json();
-      requests.push({ path: new URL(request.url).pathname, body });
+      const path = new URL(request.url).pathname;
+      requests.push({ path, body, headers: request.headers });
       if (new URL(request.url).pathname === "/v4/profile") {
         return Response.json({
           profile: { static: ["Uses Bun"], dynamic: [] },
@@ -26,6 +34,11 @@ beforeAll(() => {
             ],
           },
         });
+      }
+      if (path.endsWith("/document")) {
+        return failSessions
+          ? new Response("unavailable", { status: 503 })
+          : Response.json({ id: body.id, status: "queued" });
       }
       return Response.json({ id: "saved" });
     },
@@ -37,7 +50,11 @@ afterAll(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-async function runHook(file: string, input: Record<string, unknown>) {
+async function runHook(
+  file: string,
+  input: Record<string, unknown>,
+  env: Record<string, string> = {},
+) {
   const child = Bun.spawn(["node", join(root, file)], {
     cwd: workspace,
     env: {
@@ -47,6 +64,7 @@ async function runHook(file: string, input: Record<string, unknown>) {
       CURSOR_PROJECT_DIR: workspace,
       SUPERMEMORY_API_KEY: "sm_test_key_0123456789",
       SUPERMEMORY_API_URL: server.url.toString(),
+      ...env,
     },
     stdin: "pipe",
     stdout: "pipe",
@@ -150,5 +168,103 @@ describe("Cursor hook integration", () => {
     expect(saves).toHaveLength(savesBefore + 1);
     expect(saves.at(-1)?.body.metadata.sm_capture_mode).toBe("stop");
     expect(saves.at(-1)?.body.content).toContain("rotates atomically");
+  });
+
+  test("sends raw transcript deltas on v5 and advances only on success", async () => {
+    const transcriptPath = join(home, "raw-transcript.jsonl");
+    const line = (record: unknown) => `${JSON.stringify(record)}\n`;
+    const first =
+      line({
+        role: "user",
+        message: {
+          content: [
+            {
+              type: "text",
+              text: "<timestamp>now</timestamp>\n<user_query>\nFix token refresh — keep it atomic\n</user_query>",
+            },
+          ],
+        },
+      }) +
+      line({
+        role: "assistant",
+        message: {
+          content: [
+            { type: "text", text: "Rotation is atomic now." },
+            { type: "tool_use", name: "Shell", input: { command: "bun test" } },
+          ],
+        },
+      });
+    const second = line({ type: "turn_ended", status: "success" });
+    writeFileSync(transcriptPath, `${first}{"type":"turn_`);
+    const input = {
+      conversation_id: "6f1c2a9e-raw-session",
+      status: "completed",
+      transcript_path: transcriptPath,
+      workspace_roots: [workspace],
+    };
+    const v5 = { SUPERMEMORY_API_VERSION: "v5" };
+    const sessions = () =>
+      requests.filter((request) => request.path.endsWith("/document"));
+
+    await runHook("dist/capture.js", input, v5);
+    expect(sessions()).toHaveLength(1);
+    const sent = sessions()[0]!;
+    expect(sent.headers.get("x-sm-session")).toBe("cursor");
+    expect(sent.headers.get("x-sm-source")).toBe("cursor");
+    expect(sent.body).toMatchObject({
+      id: input.conversation_id,
+      content: first,
+      taskType: "memory",
+      dreaming: "dynamic",
+      metadata: {
+        sm_source: "cursor",
+        sm_capture_mode: "stop",
+        sessionId: input.conversation_id,
+        sm_session_generation: 0,
+        sm_session_offset: 0,
+      },
+    });
+    expect(sent.body.supportingContext).toContain("coding-agent memory");
+
+    await runHook("dist/capture.js", input, v5);
+    expect(sessions()).toHaveLength(1);
+
+    appendFileSync(transcriptPath, 'ended","status":"success"}\n');
+    failSessions = true;
+    await runHook("dist/capture.js", input, v5);
+    failSessions = false;
+    await runHook("dist/capture.js", input, v5);
+    await runHook("dist/capture.js", input, v5);
+    const offset = Buffer.byteLength(first);
+    expect(sessions().slice(1).map((request) => request.body.content)).toEqual([
+      second,
+      second,
+    ]);
+    expect(
+      sessions()
+        .slice(1)
+        .map((request) => request.body.metadata.sm_session_offset),
+    ).toEqual([offset, offset]);
+
+    const rewritten = line({
+      role: "user",
+      message: { content: [{ type: "text", text: "Summary" }] },
+    });
+    writeFileSync(transcriptPath, rewritten);
+    await runHook("dist/capture.js", input, v5);
+    writeFileSync(transcriptPath, first + second + second);
+    await runHook("dist/capture.js", input, v5);
+    expect(
+      sessions()
+        .slice(3)
+        .map((request) => [
+          request.body.metadata.sm_session_generation,
+          request.body.metadata.sm_session_offset,
+          request.body.content,
+        ]),
+    ).toEqual([
+      [1, 0, rewritten],
+      [2, 0, first + second + second],
+    ]);
   });
 });
