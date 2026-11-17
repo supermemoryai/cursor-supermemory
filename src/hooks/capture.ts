@@ -1,12 +1,18 @@
 import { createHash } from "node:crypto";
 import { loadConfig, getAuthToken, isConfigured } from "../config.ts";
-import { addMemory, AGENT_ENTITY_CONTEXT } from "../hook-api.ts";
+import {
+  addMemory,
+  addSession,
+  AGENT_ENTITY_CONTEXT,
+  resolveApiVersion,
+} from "../hook-api.ts";
 import {
   deleteHookState,
   readHookState,
   writeHookState,
 } from "../hook-state.ts";
-import { getResolvedTags } from "../tags.ts";
+import { readRawDelta } from "../session.ts";
+import { getResolvedTags, type ResolvedTags } from "../tags.ts";
 import {
   conversationId,
   type CursorHookInput,
@@ -117,6 +123,21 @@ export function formatCapture(entries: CapturedEntry[]): string {
   return parts.join("\n\n");
 }
 
+function captureMetadata(
+  tags: ResolvedTags,
+  id: string,
+): Record<string, unknown> {
+  return {
+    type: "conversation",
+    project: tags.projectName,
+    sm_project_id: tags.projectId,
+    sm_scope: "personal",
+    sm_capture_mode: "stop",
+    sessionId: id,
+    timestamp: new Date().toISOString(),
+  };
+}
+
 async function capture(input: CursorHookInput): Promise<void> {
   if (
     [input.status, input.reason].some((value) =>
@@ -136,6 +157,21 @@ async function capture(input: CursorHookInput): Promise<void> {
     const auth = () => getAuthToken(config);
 
     const id = conversationId(input);
+    if (resolveApiVersion(config.baseUrl, config.apiVersion) === "v5") {
+      if (!input.conversation_id && !input.session_id) return;
+      const delta = readRawDelta(transcriptPath, id);
+      if (!delta) return;
+      const tags = getResolvedTags(root, config);
+      await addSession(config.baseUrl, auth, tags.canonical, delta.raw, {
+        id,
+        generation: delta.generation,
+        offset: delta.offset,
+        metadata: captureMetadata(tags, id),
+        entityContext: AGENT_ENTITY_CONTEXT,
+      });
+      delta.commit();
+      return;
+    }
     const state = readHookState(id);
     const entries = parseTranscript(await readTextFile(transcriptPath));
     const capturedEntries =
@@ -162,15 +198,7 @@ async function capture(input: CursorHookInput): Promise<void> {
       auth,
       content,
       tags.canonical,
-      {
-        type: "conversation",
-        project: tags.projectName,
-        sm_project_id: tags.projectId,
-        sm_scope: "personal",
-        sm_capture_mode: "stop",
-        sessionId: id,
-        timestamp: new Date().toISOString(),
-      },
+      captureMetadata(tags, id),
       {
         customId: `cursor:capture:${createHash("sha256")
           .update(`${id}:${generation}`)
