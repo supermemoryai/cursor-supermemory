@@ -16,7 +16,7 @@ var __export = (target, all) => {
 var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // src/hooks/prompt-recall.ts
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash6 } from "node:crypto";
 
 // src/config.ts
 import path2 from "node:path";
@@ -3891,12 +3891,14 @@ async function searchMemories(baseUrl, auth2, containerTag, query, scope, apiVer
     } : {}
   }, { abortSignal, maxRetries: 0 }));
 }
-function getSearches(baseUrl, auth2, tags, query, apiVersion) {
-  return readNamespaces(tags, (tag) => searchMemories(baseUrl, auth2, tag, query, undefined, apiVersion));
+async function getSearches(baseUrl, auth2, tags, query, apiVersion) {
+  const searches = await readNamespaces(tags, (tag) => searchMemories(baseUrl, auth2, tag, query, undefined, apiVersion));
+  return searches.map(([, search]) => search);
 }
 async function readNamespaces(tags, read) {
-  const results = await Promise.allSettled([...new Set(tags.filter(Boolean))].map(read));
-  const values = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+  const uniqueTags = [...new Set(tags.filter(Boolean))];
+  const results = await Promise.allSettled(uniqueTags.map(read));
+  const values = results.flatMap((result, index) => result.status === "fulfilled" ? [[uniqueTags[index], result.value]] : []);
   if (!values.length) {
     const failure = results.find((result) => result.status === "rejected");
     throw failure?.reason ?? new Error("Supermemory is unreachable");
@@ -4282,6 +4284,31 @@ function getResolvedTags(directory, config) {
   };
 }
 
+// src/tag-checks.ts
+import { createHash as createHash5 } from "node:crypto";
+import { mkdirSync as mkdirSync2, readFileSync as readFileSync3, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { join as join4 } from "node:path";
+function checksDir() {
+  return join4(homedir3(), ".supermemory-cursor", "tag-checks");
+}
+function checksPath(canonicalTag) {
+  const id = createHash5("sha256").update(canonicalTag).digest("hex").slice(0, 32);
+  return join4(checksDir(), `${id}.json`);
+}
+function readTagChecks(canonicalTag) {
+  try {
+    const parsed = JSON.parse(readFileSync3(checksPath(canonicalTag), "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+function getRecallTags(canonicalTag, readTags) {
+  const checks = readTagChecks(canonicalTag);
+  return readTags.filter((tag) => tag === canonicalTag || checks[tag] !== false);
+}
+
 // src/hooks/types.ts
 function workspaceRoot(input) {
   return input.workspace_roots?.[0] || process.env.CURSOR_PROJECT_DIR || process.cwd();
@@ -4351,7 +4378,7 @@ function resultText(result) {
   return String(result.memory ?? result.chunk ?? result.content ?? result.title ?? "").trim();
 }
 function hashText(text) {
-  return createHash5("sha256").update(text.toLowerCase()).digest("hex");
+  return createHash6("sha256").update(text.toLowerCase()).digest("hex");
 }
 function selectRecallResults(profiles, seenHashes, threshold = MIN_SIMILARITY) {
   const seen = new Set(seenHashes);
@@ -4410,7 +4437,7 @@ async function runPromptRecall(input) {
     const id = conversationId(input);
     const state = readHookState(id);
     const tags = getResolvedTags(root, config);
-    const profiles = await getSearches(config.baseUrl, auth2, tags.allReads, prompt.slice(0, MAX_QUERY_LENGTH), config.apiVersion);
+    const profiles = await getSearches(config.baseUrl, auth2, getRecallTags(tags.canonical, tags.allReads), prompt.slice(0, MAX_QUERY_LENGTH), config.apiVersion);
     const { fresh, hashes } = selectRecallResults(profiles, state.seenHashes ?? [], Math.max(MIN_SIMILARITY, config.similarityThreshold));
     writeHookState(id, fresh.length > 0 ? {
       pendingContext: formatRecall(fresh, tags.canonical),

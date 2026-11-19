@@ -3,6 +3,7 @@ import { loadConfig, getAuthToken, isConfigured } from "../config.ts";
 import { getSearches } from "../hook-api.ts";
 import { readHookState, writeHookState } from "../hook-state.ts";
 import { getResolvedTags } from "../tags.ts";
+import { getRecallTags } from "../tag-checks.ts";
 import {
   conversationId,
   type CursorHookInput,
@@ -122,7 +123,7 @@ export async function runPromptRecall(input: CursorHookInput): Promise<void> {
     const profiles = await getSearches(
       config.baseUrl,
       auth,
-      tags.allReads,
+      getRecallTags(tags.canonical, tags.allReads),
       prompt!.slice(0, MAX_QUERY_LENGTH),
       config.apiVersion,
     );

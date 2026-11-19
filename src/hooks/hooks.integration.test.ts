@@ -18,6 +18,12 @@ beforeAll(() => {
       const body = await request.json();
       requests.push({ path: new URL(request.url).pathname, body });
       if (new URL(request.url).pathname === "/v4/profile") {
+        if (body.containerTag?.startsWith("codex_")) {
+          return Response.json({
+            profile: { static: [], dynamic: [] },
+            searchResults: { results: [] },
+          });
+        }
         return Response.json({
           profile: { static: ["Uses Bun"], dynamic: [] },
           searchResults: {
@@ -150,5 +156,30 @@ describe("Cursor hook integration", () => {
     expect(saves).toHaveLength(savesBefore + 1);
     expect(saves.at(-1)?.body.metadata.sm_capture_mode).toBe("stop");
     expect(saves.at(-1)?.body.content).toContain("rotates atomically");
+  });
+
+  test("skips legacy tags that SessionStart found empty", async () => {
+    const profileTags = () =>
+      requests
+        .filter((request) => request.path === "/v4/profile")
+        .map((request) => request.body.containerTag)
+        .sort();
+    requests.length = 0;
+    await runHook("dist/session-start.js", {
+      session_id: "session-tags",
+      workspace_roots: [workspace],
+    });
+    const checked = profileTags();
+    requests.length = 0;
+    await runHook("dist/prompt-recall.js", {
+      conversation_id: "conversation-tags",
+      generation_id: "generation-tags",
+      prompt: "continue fixing the authentication flow",
+      workspace_roots: [workspace],
+    });
+    expect(checked.some((tag) => tag.startsWith("codex_"))).toBe(true);
+    expect(profileTags()).toEqual(
+      checked.filter((tag) => !tag.startsWith("codex_")),
+    );
   });
 });

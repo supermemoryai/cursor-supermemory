@@ -4,6 +4,7 @@ import { getResolvedTags } from "../tags.ts";
 import { getProfiles, resolveApiVersion } from "../hook-api.ts";
 import { formatContainerDirective, formatSessionContext } from "../context.ts";
 import { pluginRootFromEnv, readStdinText } from "../runtime.ts";
+import { recordTagChecks } from "../tag-checks.ts";
 
 interface SessionStartInput {
   workspace_roots: string[];
@@ -12,6 +13,14 @@ interface SessionStartInput {
 }
 
 const ok = () => process.stdout.write(JSON.stringify({}));
+
+function hasMemories(profile: any): boolean {
+  return [
+    profile?.profile?.static,
+    profile?.profile?.dynamic,
+    profile?.searchResults?.results,
+  ].some((items) => Array.isArray(items) && items.length > 0);
+}
 
 async function main() {
   const raw = await readStdinText();
@@ -44,7 +53,7 @@ async function main() {
   const tags = getResolvedTags(workspaceRoot, config);
   let profiles: any[] = [];
   try {
-    profiles = config.injectProfile
+    const tagProfiles = config.injectProfile
       ? await getProfiles(
           config.baseUrl,
           auth,
@@ -56,6 +65,13 @@ async function main() {
           config.apiVersion,
         )
       : [];
+    recordTagChecks(
+      tags.canonical,
+      Object.fromEntries(
+        tagProfiles.map(([tag, profile]) => [tag, hasMemories(profile)]),
+      ),
+    );
+    profiles = tagProfiles.map(([, profile]) => profile);
   } catch (error) {
     if (isAuthRequired(error)) {
       notConnected();
