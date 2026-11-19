@@ -272,7 +272,7 @@ export function getProfiles(
   query?: string,
   canonicalScope?: "personal" | "project",
   apiVersion?: string,
-): Promise<any[]> {
+): Promise<Array<[string, any]>> {
   return readNamespaces(tags, (tag, index) =>
     getProfile(
       baseUrl,
@@ -285,27 +285,27 @@ export function getProfiles(
   );
 }
 
-export function getSearches(
+export async function getSearches(
   baseUrl: string | null,
   auth: AuthSource,
   tags: string[],
   query: string,
   apiVersion?: string,
 ): Promise<any[]> {
-  return readNamespaces(tags, (tag) =>
+  const searches = await readNamespaces(tags, (tag) =>
     searchMemories(baseUrl, auth, tag, query, undefined, apiVersion),
   );
+  return searches.map(([, search]) => search);
 }
 
 async function readNamespaces(
   tags: string[],
   read: (tag: string, index: number) => Promise<any>,
-): Promise<any[]> {
-  const results = await Promise.allSettled(
-    [...new Set(tags.filter(Boolean))].map(read),
-  );
-  const values = results.flatMap((result) =>
-    result.status === "fulfilled" ? [result.value] : [],
+): Promise<Array<[string, any]>> {
+  const uniqueTags = [...new Set(tags.filter(Boolean))];
+  const results = await Promise.allSettled(uniqueTags.map(read));
+  const values = results.flatMap((result, index): Array<[string, any]> =>
+    result.status === "fulfilled" ? [[uniqueTags[index]!, result.value]] : [],
   );
   if (!values.length) {
     const failure = results.find(

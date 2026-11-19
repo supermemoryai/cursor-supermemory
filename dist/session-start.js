@@ -4242,8 +4242,9 @@ function getProfiles(baseUrl, auth2, tags, query, canonicalScope, apiVersion) {
   return readNamespaces(tags, (tag, index) => getProfile(baseUrl, auth2, tag, query, index === 0 ? canonicalScope : undefined, apiVersion));
 }
 async function readNamespaces(tags, read) {
-  const results = await Promise.allSettled([...new Set(tags.filter(Boolean))].map(read));
-  const values = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+  const uniqueTags2 = [...new Set(tags.filter(Boolean))];
+  const results = await Promise.allSettled(uniqueTags2.map(read));
+  const values = results.flatMap((result, index) => result.status === "fulfilled" ? [[uniqueTags2[index], result.value]] : []);
   if (!values.length) {
     const failure = results.find((result) => result.status === "rejected");
     throw failure?.reason ?? new Error("Supermemory is unreachable");
@@ -4301,8 +4302,48 @@ function pluginRootFromEnv(env = process.env) {
   return [env.CURSOR_PLUGIN_ROOT, env.CLAUDE_PLUGIN_ROOT, env.GROK_PLUGIN_ROOT].find((value) => !!value && !value.includes("${"));
 }
 
+// src/tag-checks.ts
+import { createHash as createHash4 } from "node:crypto";
+import { mkdirSync, readFileSync as readFileSync2, renameSync, writeFileSync } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { join as join3 } from "node:path";
+function checksDir() {
+  return join3(homedir2(), ".supermemory-cursor", "tag-checks");
+}
+function checksPath(canonicalTag) {
+  const id = createHash4("sha256").update(canonicalTag).digest("hex").slice(0, 32);
+  return join3(checksDir(), `${id}.json`);
+}
+function readTagChecks(canonicalTag) {
+  try {
+    const parsed = JSON.parse(readFileSync2(checksPath(canonicalTag), "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+function recordTagChecks(canonicalTag, hasMemories) {
+  if (Object.keys(hasMemories).length === 0)
+    return;
+  try {
+    mkdirSync(checksDir(), { recursive: true, mode: 448 });
+    const filePath = checksPath(canonicalTag);
+    const tempPath = `${filePath}.${process.pid}.tmp`;
+    writeFileSync(tempPath, `${JSON.stringify({ ...readTagChecks(canonicalTag), ...hasMemories })}
+`, { mode: 384 });
+    renameSync(tempPath, filePath);
+  } catch {}
+}
+
 // src/hooks/session-start.ts
 var ok = () => process.stdout.write(JSON.stringify({}));
+function hasMemories(profile) {
+  return [
+    profile?.profile?.static,
+    profile?.profile?.dynamic,
+    profile?.searchResults?.results
+  ].some((items) => Array.isArray(items) && items.length > 0);
+}
 async function main() {
   const raw = await readStdinText();
   const input = JSON.parse(raw);
@@ -4326,7 +4367,9 @@ async function main() {
   const tags = getResolvedTags(workspaceRoot, config);
   let profiles = [];
   try {
-    profiles = config.injectProfile ? await getProfiles(config.baseUrl, auth2, tags.allReads, resolveApiVersion(config.baseUrl, config.apiVersion) === "legacy" ? tags.projectName : undefined, undefined, config.apiVersion) : [];
+    const tagProfiles = config.injectProfile ? await getProfiles(config.baseUrl, auth2, tags.allReads, resolveApiVersion(config.baseUrl, config.apiVersion) === "legacy" ? tags.projectName : undefined, undefined, config.apiVersion) : [];
+    recordTagChecks(tags.canonical, Object.fromEntries(tagProfiles.map(([tag, profile]) => [tag, hasMemories(profile)])));
+    profiles = tagProfiles.map(([, profile]) => profile);
   } catch (error) {
     if (isAuthRequired(error)) {
       notConnected();
